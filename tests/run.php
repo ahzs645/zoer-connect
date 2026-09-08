@@ -44,6 +44,11 @@ try {
     $id=$s->create($empty,$manifest['target'])['id']; $s->chunk($id,0,0,'');
     check($s->verify($id)['status']==='staged','empty file'); $s->cancel($id);
     rejects(fn()=>$s->status('../public'),'invalid job path');
+    $id=$s->create($manifest,$manifest['target'])['id'];
+    check($s->jobs()[0]['id']===$id,'job discovery');
+    check($s->expire(time())===[],'keep recent jobs');
+    check($s->expire(time()+86401)===[$id],'expire old staging');
+    check($s->jobs()===[],'expiry releases reservation');
     echo "$n assertions passed\n";
 } finally {
     $it=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST);

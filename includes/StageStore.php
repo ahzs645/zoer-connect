@@ -73,6 +73,32 @@ final class StageStore {
         if (!is_file($path)) throw new \InvalidArgumentException('Job not found.');
         return json_decode(file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
     }
+    public function jobs(): array {
+        return $this->locked(function () {
+            $result = [];
+            foreach (glob($this->root . '/*/state.json') as $path) {
+                $job = $this->read(basename(dirname($path)));
+                $result[] = ['id' => $job['id'], 'status' => $job['status'], 'createdAt' => $job['createdAt'], 'target' => $job['manifest']['target']];
+            }
+            return $result;
+        });
+    }
+    /** Explicit expiry operation; never removes a job with a publication journal. */
+    public function expire(int $now): array {
+        return $this->locked(function () use ($now) {
+            $removed = [];
+            foreach (glob($this->root . '/*/state.json') as $path) {
+                $id = basename(dirname($path)); $job = $this->read($id);
+                if (strtotime($job['createdAt']) + 86400 > $now || is_file(dirname($path) . '/publication.json')) continue;
+                foreach (glob(dirname($path) . '/*') as $file) {
+                    if (!is_file($file) || !unlink($file)) throw new \RuntimeException('Expiry cleanup failed.');
+                }
+                if (!rmdir(dirname($path))) throw new \RuntimeException('Expiry cleanup failed.');
+                $removed[] = $id;
+            }
+            return $removed;
+        });
+    }
     public function create(array $manifest, string $target): array {
         $manifest = self::validateManifest($manifest, $target);
         return $this->locked(function () use ($manifest) {

@@ -29,13 +29,15 @@ Application passwords inherit the user's WordPress permissions, including other 
 
 Storage defaults to `.zoer-connect` beside WordPress's root. It must resolve outside both ABSPATH and the server's DOCUMENT_ROOT; otherwise staging fails closed. An administrator may set `ZOER_CONNECT_STORAGE_DIR` to a private writable directory in wp-config.php. Do not change DOCUMENT_ROOT to bypass the check. PHP cannot infer other web-server aliases: the operator must ensure the chosen directory is not exposed by another vhost or alias. No database dumps or PHP files are staged under public_html.
 
-Deactivation and uninstall preserve staging files deliberately. Cancel the job before uninstalling to remove its data. There is no automated expiry yet. One active job reserves up to 2 GiB; no concurrent second bundle is accepted.
+Deactivation and uninstall preserve staging files deliberately. Cancel the job before uninstalling to remove its data. The authenticated POST /expire operation removes staging jobs older than 24 hours, excluding any job with a publication journal. It is not automatically scheduled yet. One active job reserves up to 2 GiB; no concurrent second bundle is accepted.
 
 ## API v1
 
 All routes require HTTPS and an administrator application password. Requests are JSON, at most 512 KiB. Responses must not be cached.
 
 - `GET /status`: version, target, storage readiness and explicit capabilities.
+- `GET /jobs`: discover jobs after a lost create response.
+- `POST /expire`: remove staging jobs older than 24 hours, preserving publication journals.
 - `POST /jobs`: create a job from the manifest below; retain its returned `id`. An uncertain create must not be automatically repeated.
 - `GET /jobs/{id}`: state and one current byte offset per file. Resume from those offsets.
 - `POST /jobs/{id}/chunks`: `{ "index": 0, "offset": 0, "data": "BASE64" }`, decoded chunks ≤256 KiB. Retrying the exact same bytes is idempotent. Gaps and conflicting retries are rejected.
@@ -68,3 +70,9 @@ Only themes, plugins and uploads paths are supported. Paths are conservative ASC
 5. Verify home, researcher counts, assets, permalinks and admin login before reporting published. Test rollback and interrupted writes on a disposable WordPress destination before any live installation.
 
 This repository has its own `.git` history under Zoer's `wordpress-plugins/` directory. It is a local nested repository, not yet a Git submodule with a remote URL. After choosing a remote, push this repository and register it as a proper submodule in Zoer; do not create a gitlink pointing at an unpublished commit.
+
+## Development: file publication engine
+
+`includes/FilePublication.php` now implements selected-file backup, verified activation, a persistent per-file journal, process-resume behavior, and rollback. It rejects symlink destinations and refuses to overwrite content edited since planning or publication. It is not exposed through REST and is not a complete site publisher. It does not coordinate a maintenance window, database cutover, modes/ownership restoration or full-site health checks. Backup hashes are verified; crash/power-loss durability and real WordPress integration still need testing. No files are deleted merely because they are absent from the manifest.
+
+Unit tests exercise backup-before-activation, resuming with a new instance, rollback, post-publication edit protection, and staging job discovery/expiry. Tests ran in the existing DDEV PHP image in an isolated network-disabled container with a temporary filesystem; no live WordPress files or database were changed.

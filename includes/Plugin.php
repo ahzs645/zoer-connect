@@ -46,6 +46,8 @@ final class Plugin {
             try { self::store(); } catch (\Throwable $e) { $ready = false; }
             return ['version' => '0.1.0', 'target' => untrailingslashit(home_url()), 'stagingReady' => $ready, 'capabilities' => ['stageFiles' => true, 'publish' => false, 'databaseImport' => false, 'rollback' => false], 'maxChunkBytes' => StageStore::CHUNK];
         });
+        $register('/jobs', 'GET', static fn() => self::store()->jobs());
+        $register('/expire', 'POST', static fn() => ['expired' => self::store()->expire(time())]);
         $register('/jobs', 'POST', static function ($r) {
             $body = $r->get_json_params();
             if (!is_array($body)) throw new \InvalidArgumentException('JSON manifest required.');
