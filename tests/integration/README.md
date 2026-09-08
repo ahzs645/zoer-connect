@@ -51,3 +51,13 @@ Added internal RecoveryCoordinator and SettingsPreservation. On the explicitly d
 recovery.php used uniquely named table and theme fixtures with the installed file and database engines. An injected exception after actual database cutover simulated a lost response; a new coordinator instance restored the original table and file in reverse order. Only fixture tables/files were removed. This is exception/restart-instance testing, not OS kill or power-loss testing.
 
 The coordinator is internal and requires externally quiesced writes. It does not provide a maintenance-mode bypass, public authenticated recovery channel, multi-table atomic cutover or a Zoer UI. Public publication remains disabled. No live SparkLab mutation, Hostinger SSH activation, proxy authorization widening or production deployment occurred.
+
+## Per-resource two-site matrix
+
+The pasted WP Migrate options were parsed as UI reference only. Added resources.php/resources.py for transfers between `zoer-connect-security-test` and the new `zoer-connect-transfer-peer`. Both are disposable local DDEV WordPress sites with Zoer Connect installed. Existing local SparkLab is not a replacement destination.
+
+The runner seeds distinct fixture content on each site, exports the source fixture, invokes the installed plugin's selected-file/table engines on the destination, verifies unselected files/database rows are unchanged, and restores the destination after each scenario. It runs theme-file, plugin-file, media-file and selected-table scenarios in both directions. Fixture resources are removed afterward. The host runner moves the dummy payload between containers; this is not coverage of a remote plugin push/pull protocol or a UI.
+
+The first run found the private payload copy was owned by a different container UID. The test runner now assigns that exact private fixture file to the destination runtime user without broadening file permissions.
+
+Reference options still lacking implementation/test coverage: active/all/except-selected selection, gitignore semantics, new/modified/date media filtering, post-type filtering with related metadata, spam/revision exclusion, custom regex/serialized replacements, GUID policy, compression, must-use plugins, other wp-content files, WordPress core migration, saved profiles, and a user-facing push/pull workflow. Full-site publication remains disabled. Do not infer these from the four resource-engine scenarios.
