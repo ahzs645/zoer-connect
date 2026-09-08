@@ -11,6 +11,7 @@ test: lint
 	php tests/run.php
 	php tests/auth.php
 	php tests/selection.php
+	php tests/related-replacement.php
 	php tests/coordinator.php
 	php tests/publication.php
 	python3 tests/build_test.py
