@@ -76,3 +76,7 @@ This repository has its own `.git` history under Zoer's `wordpress-plugins/` dir
 `includes/FilePublication.php` now implements selected-file backup, verified activation, a persistent per-file journal, process-resume behavior, and rollback. It rejects symlink destinations and refuses to overwrite content edited since planning or publication. It is not exposed through REST and is not a complete site publisher. It does not coordinate a maintenance window, database cutover, modes/ownership restoration or full-site health checks. Backup hashes are verified; crash/power-loss durability and real WordPress integration still need testing. No files are deleted merely because they are absent from the manifest.
 
 Unit tests exercise backup-before-activation, resuming with a new instance, rollback, post-publication edit protection, and staging job discovery/expiry. Tests ran in the existing DDEV PHP image in an isolated network-disabled container with a temporary filesystem; no live WordPress files or database were changed.
+
+## Development: database staging primitive
+
+`includes/TableStage.php` now provides experimental staging for an existing, explicitly selected InnoDB table, transactional retry tracking, count verification, retained original table at activation, and restore. It is internal only and cannot migrate a whole WordPress site. Options and user tables are deliberately rejected until identity preservation is implemented. Source and destination schemas must already match. See the integration test report for tested behavior and unresolved safeguards.

@@ -33,3 +33,13 @@ Not yet verified / required before production:
 - Browser/mobile setup, saved profiles, source exporter and full push/pull UX.
 
 These are targeted integration tests, not a comprehensive security audit. Keep the public publish endpoint disabled until the remaining implementation and tests pass.
+
+## New reference and database primitive follow-up
+
+Compared the supplied WP Migrate 2.7.11 source with 2.7.7. Observed changes include primary-key column validation, prepared post-type filtering, download capability and nonce checks, basename/realpath containment, and removal of absolute paths from download errors. These observations are source comparisons, not a claim that either package received a complete security review.
+
+Added internal `TableStage` for one explicitly selected existing InnoDB table: exact identifier/column validation, refusal of identity tables, trigger/foreign-key rejection, transactional row batches with an idempotency ledger, count verification, atomic pairwise table rename retaining the old table, and repeatable restore. Tested on uniquely named fixture tables in the fresh WordPress database and deleted only those fixtures afterward. No real WordPress content table was replaced.
+
+Limits: this is not yet the full database importer. It clones the destination schema, does not perform schema reconciliation or serialization-safe replacements, and requires the caller to quiesce application writes. GET_LOCK only serializes this engine's operations; it does not stop WordPress writes. Verification currently checks counts, not a complete canonical content digest. Multi-table cutover, application settings/identity preservation, backup export, interrupted-DDL recovery testing and integrated file/database rollback remain required. The primitive has no public endpoint.
+
+Rebuilt and reinstalled the ZIP on the disposable site. A direct test-file copy had created inconsistent ownership and initially blocked plugin update; corrected the ownership of that one file to match the plugin directory, then reinstalled successfully. Re-ran all HTTP, installed-file-engine and database-fixture checks successfully. This is also a reminder that production preflight must check ownership/permissions.

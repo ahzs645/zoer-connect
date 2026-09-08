@@ -161,6 +161,7 @@ final class StageStore {
     public function cancel(string $id): array {
         return $this->locked(function () use ($id) {
             $this->read($id);
+            if (is_file($this->root . '/' . $id . '/publication.json')) throw new \RuntimeException('Publication recovery data must be retained.');
             foreach (glob($this->root . '/' . $id . '/*') as $path) {
                 if (!is_file($path) || !unlink($path)) throw new \RuntimeException('Cannot remove staged data.');
             }

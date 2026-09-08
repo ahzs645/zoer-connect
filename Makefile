@@ -5,6 +5,8 @@ lint:
 	php -l zoer-connect.php
 	php -l includes/Plugin.php
 	php -l includes/StageStore.php
+	php -l includes/TableStage.php
+	php -l includes/FilePublication.php
 test: lint
 	php tests/run.php
 	php tests/auth.php
