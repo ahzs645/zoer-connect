@@ -11,9 +11,10 @@ final class TableStage {
     private string $backup;
     private string $ledger;
     private string $lock;
-    public function __construct($db, string $table, string $id) {
+    public function __construct($db, string $table, string $id, bool $preserveOptions = false) {
         if (!preg_match('/^[a-f0-9]{16}$/D', $id) || !preg_match('/^[A-Za-z0-9_]{1,48}$/D', $table) || !str_starts_with($table, $db->prefix)) throw new \InvalidArgumentException('Invalid staging identity.');
-        if (in_array($table, [$db->options, $db->users, $db->usermeta], true)) throw new \InvalidArgumentException('Identity tables require a preservation policy.');
+        if (in_array($table, [$db->users, $db->usermeta], true)) throw new \InvalidArgumentException('Identity tables require a preservation policy.');
+        if ($table === $db->options && !$preserveOptions) throw new \InvalidArgumentException('Options preservation must be explicit.');
         $this->db=$db; $this->live=$table;
         $this->stage='zoer_s_'.$id; $this->backup='zoer_b_'.$id; $this->ledger='zoer_l_'.$id;
         $this->lock='zoer:'.$db->dbname.':'.$table;
@@ -68,6 +69,10 @@ final class TableStage {
             $count=(int)$this->db->get_var("SELECT COUNT(*) FROM `{$this->stage}`");
             $batches=(int)$this->db->get_var("SELECT COUNT(*) FROM `{$this->ledger}` WHERE sequence_id>=0");
             if($count!==$rows||$batches!==$chunks)throw new \RuntimeException('Count verification failed.');
+            if($this->live===$this->db->options) {
+                require_once __DIR__.'/SettingsPreservation.php';
+                SettingsPreservation::apply($this->db,$this->stage);
+            }
             $this->q("UPDATE `{$this->ledger}` SET phase='verified' WHERE sequence_id=-1");
         });
     }
@@ -88,6 +93,10 @@ final class TableStage {
         $this->locked(function(){
             $phase=$this->db->get_var("SELECT phase FROM `{$this->ledger}` WHERE sequence_id=-1");
             if($phase==='restored')return;
+            if($phase==='verified' || ($phase==='swapping' && $this->exists($this->stage) && !$this->exists($this->backup))) {
+                $this->q("UPDATE `{$this->ledger}` SET phase='restored' WHERE sequence_id=-1"); return;
+            }
+            if($phase==='swapping' && $this->exists($this->backup) && !$this->exists($this->stage))$phase='activated';
             if(!in_array($phase,['activated','restoring'],true))throw new \RuntimeException('Not activated.');
             $this->q("UPDATE `{$this->ledger}` SET phase='restoring' WHERE sequence_id=-1");
             if($this->exists($this->backup)&&!$this->exists($this->stage))$this->q("RENAME TABLE `{$this->live}` TO `{$this->stage}`, `{$this->backup}` TO `{$this->live}`");

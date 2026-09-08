@@ -80,3 +80,7 @@ Unit tests exercise backup-before-activation, resuming with a new instance, roll
 ## Development: database staging primitive
 
 `includes/TableStage.php` now provides experimental staging for an existing, explicitly selected InnoDB table, transactional retry tracking, count verification, retained original table at activation, and restore. It is internal only and cannot migrate a whole WordPress site. Options and user tables are deliberately rejected until identity preservation is implemented. Source and destination schemas must already match. See the integration test report for tested behavior and unresolved safeguards.
+
+## Development: recovery and identity policy
+
+RecoveryCoordinator now journals file/table activation and reverses attempted changes after a failure. SettingsPreservation retains destination URLs, administrator email, upload configuration and roles, keeps Zoer Connect active, and removes transferred transient caches. TableStage accepts the options table only with this explicit preservation policy; user and usermeta tables remain rejected. These primitives are not exposed as a production publisher. Their disposable-site integration tests passed, including combined recovery after a simulated lost response. Maintenance handling, durable public recovery access, author identity mapping and Zoer UI integration remain incomplete.

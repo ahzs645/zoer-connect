@@ -43,3 +43,11 @@ Added internal `TableStage` for one explicitly selected existing InnoDB table: e
 Limits: this is not yet the full database importer. It clones the destination schema, does not perform schema reconciliation or serialization-safe replacements, and requires the caller to quiesce application writes. GET_LOCK only serializes this engine's operations; it does not stop WordPress writes. Verification currently checks counts, not a complete canonical content digest. Multi-table cutover, application settings/identity preservation, backup export, interrupted-DDL recovery testing and integrated file/database rollback remain required. The primitive has no public endpoint.
 
 Rebuilt and reinstalled the ZIP on the disposable site. A direct test-file copy had created inconsistent ownership and initially blocked plugin update; corrected the ownership of that one file to match the plugin directory, then reinstalled successfully. Re-ran all HTTP, installed-file-engine and database-fixture checks successfully. This is also a reminder that production preflight must check ownership/permissions.
+
+## Recovery and identity follow-up
+
+Added internal RecoveryCoordinator and SettingsPreservation. On the explicitly disposable WordPress site, settings.php staged and briefly switched the actual options table, preserved its original destination URL and connector activation, verified user records were unchanged, then restored the original options. Authentication/staging HTTP checks passed afterward. Users/usermeta remain excluded from transfer; author/user-ID reconciliation is not implemented.
+
+recovery.php used uniquely named table and theme fixtures with the installed file and database engines. An injected exception after actual database cutover simulated a lost response; a new coordinator instance restored the original table and file in reverse order. Only fixture tables/files were removed. This is exception/restart-instance testing, not OS kill or power-loss testing.
+
+The coordinator is internal and requires externally quiesced writes. It does not provide a maintenance-mode bypass, public authenticated recovery channel, multi-table atomic cutover or a Zoer UI. Public publication remains disabled. No live SparkLab mutation, Hostinger SSH activation, proxy authorization widening or production deployment occurred.
