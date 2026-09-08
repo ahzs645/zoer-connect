@@ -8,6 +8,6 @@ first = archive.read_bytes()
 subprocess.run(['python3', 'scripts/build.py'], cwd=root, check=True, capture_output=True)
 assert first == archive.read_bytes(), 'Build must be reproducible'
 with ZipFile(archive) as z:
-    assert set(z.namelist()) == {'zoer-connect/zoer-connect.php','zoer-connect/includes/Plugin.php','zoer-connect/includes/FilePublication.php','zoer-connect/includes/TableStage.php','zoer-connect/includes/Selection.php','zoer-connect/includes/RelatedRows.php','zoer-connect/includes/Replacement.php','zoer-connect/includes/SettingsPreservation.php','zoer-connect/includes/RecoveryCoordinator.php','zoer-connect/includes/StageStore.php','zoer-connect/readme.txt','zoer-connect/LICENSE'}
+    assert set(z.namelist()) == {'zoer-connect/zoer-connect.php','zoer-connect/includes/Plugin.php','zoer-connect/includes/FilePublication.php','zoer-connect/includes/TableStage.php','zoer-connect/includes/Selection.php','zoer-connect/includes/ExportProfile.php','zoer-connect/includes/FileExporter.php','zoer-connect/includes/ExportAdmin.php','zoer-connect/includes/RelatedRows.php','zoer-connect/includes/Replacement.php','zoer-connect/includes/SettingsPreservation.php','zoer-connect/includes/RecoveryCoordinator.php','zoer-connect/includes/StageStore.php','zoer-connect/readme.txt','zoer-connect/LICENSE'}
     assert z.testzip() is None
 print('ZIP layout and deterministic build passed')

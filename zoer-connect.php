@@ -12,3 +12,6 @@ defined('ABSPATH') || exit;
 require_once __DIR__ . '/includes/StageStore.php';
 require_once __DIR__ . '/includes/Plugin.php';
 \ZoerConnect\Plugin::boot();
+
+foreach (["Selection", "ExportProfile", "FileExporter", "ExportAdmin"] as $class) require_once __DIR__ . "/includes/" . $class . ".php";
+\ZoerConnect\ExportAdmin::boot();

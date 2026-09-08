@@ -71,6 +71,7 @@ final class Plugin {
         if (!current_user_can('manage_options')) return;
         echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.1 — connection and file staging preview.</p>';
         echo '<div class="notice notice-warning inline"><p>This version cannot publish or import your database. Staging never changes live files.</p></div>';
+        ExportAdmin::render();
         echo '<h2>Connect Zoer</h2><ol><li>Use HTTPS on this site.</li><li>Create a dedicated application password named “Zoer” on your WordPress profile.</li><li>Enter the site URL, username and application password into your client. Keep it out of logs and source control.</li></ol>';
         echo '<p><a class="button" href="' . esc_url(admin_url('profile.php#application-passwords-section')) . '">Manage application passwords</a></p>';
         echo '<p>Revoke the application password from your profile to disconnect. WordPress application passwords inherit the account’s capabilities; they are not restricted to this plugin.</p>';
