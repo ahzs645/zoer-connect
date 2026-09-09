@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.3.6
+Stable tag: 0.3.7
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -23,7 +23,9 @@ Upload and activate the plugin. Open Tools > Zoer Connect to generate connection
 
 == Changelog ==
 
-= 0.3.6 =
+= 0.3.7 =
+* Add bounded resumable file scanning, manifest pages and batched downloads for updated Zoer clients.
+* Report allowlisted export blockers without exposing raw exceptions.
 * Safe storage diagnostics and first-time private-folder setup in WordPress admin.
 * Preserve the configured destination storage location and exclude it from exports.
 

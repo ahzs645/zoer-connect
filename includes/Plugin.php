@@ -70,13 +70,13 @@ final class Plugin {
         try { self::store(); return ['ready'=>true,'code'=>'ready','message'=>'Private storage is available.']; }
         catch (\Throwable $error) { $code=$error instanceof StorageUnavailable ? $error->reason : 'unavailable'; return ['ready'=>false,'code'=>$code,'message'=>$messages[$code]??$messages['unavailable']]; }
     }
-    private static function exports(): RemoteExport {
+    private static function exports(bool $paged=false): RemoteExport|PagedExport {
         if(empty($_SERVER['DOCUMENT_ROOT']))throw new StorageUnavailable('public_root_unavailable');
         $root=self::storageRoot();
         $record=get_option(ConnectionKey::OPTION,[]);
         $owner=is_array($record)?(string)($record['hash']??''):'';
         if($owner==='')throw new \RuntimeException('Configure a connection key first.');
-        return new RemoteExport($root,[ABSPATH,$_SERVER['DOCUMENT_ROOT']],ABSPATH,$owner);
+        return $paged ? new PagedExport($root,[ABSPATH,$_SERVER['DOCUMENT_ROOT']],ABSPATH,$owner) : new RemoteExport($root,[ABSPATH,$_SERVER['DOCUMENT_ROOT']],ABSPATH,$owner);
     }
     /** Runs before regular plugins, including when a transfer left them unusable. */
     public static function earlyImportRecovery(string $route): array {
@@ -141,6 +141,8 @@ final class Plugin {
                     } catch (\InvalidArgumentException $e) {
                         return new \WP_Error('zoer_invalid', $e->getMessage(), ['status' => 400]);
                     } catch (\Throwable $e) {
+                        $safe=['Too many selected files.','A selected file exceeds the current 32 MiB export limit.','Paged export exceeds its file or byte limit.','Insufficient private export storage.','Pull requires InnoDB tables.','Pull requires primary keys for stable table ordering.','Database snapshot exceeded its request time budget. Retry a fresh export.','Database snapshot exceeds the 256 MiB or 40 second limit.','Export expired. Start a new pull.','Source changed during pull.','Symlink source rejected.','Unsafe source file.'];
+                        if(in_array($e->getMessage(),$safe,true))return new \WP_Error('zoer_export_blocked',$e->getMessage(),['status'=>409]);
                         // Never return filesystem paths, SQL, credentials or raw PHP exceptions.
                         return new \WP_Error('zoer_unavailable', 'Staging unavailable. Check private storage, free space, or an existing job.', ['status' => 409]);
                     }
@@ -157,8 +159,13 @@ final class Plugin {
             $record=get_option(ConnectionKey::OPTION,null);
             $private=self::storageRoot();
             $importReady=ImportAdmin::ready($private,ABSPATH);
-            return ['version' => '0.3.6', 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => ['connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'artifactReuse'=>true, 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady], 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK];
+            return ['version' => '0.3.7', 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => ['pagedExport'=>true,'connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'artifactReuse'=>true, 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady], 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK];
         });
+        $register('/exports/paged', 'POST', static function($r){global $wpdb,$wp_version;$b=$r->get_json_params();if(!is_array($b))throw new \InvalidArgumentException('JSON selections required.');return self::exports(true)->create($b,['url'=>untrailingslashit(home_url()),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version]);});
+        $register('/exports/paged/(?P<id>[a-f0-9]{32})/step','POST',static function($r){global $wpdb;return self::exports(true)->step($r['id'],static fn($p)=>DatabaseExporter::write($wpdb,$p));});
+        $register('/exports/paged/(?P<id>[a-f0-9]{32})/manifest','GET',static function($r){$o=$r['offset'];if(!is_string($o)||!preg_match('/^(0|[1-9][0-9]{0,6})$/D',$o))throw new \InvalidArgumentException('Invalid manifest offset.');return self::exports(true)->manifest($r['id'],(int)$o);});
+        $register('/exports/paged/(?P<id>[a-f0-9]{32})/batch','GET',static function($r){foreach(['index','offset'] as $k)if(!is_string($r[$k])||!preg_match('/^(0|[1-9][0-9]{0,12})$/D',$r[$k]))throw new \InvalidArgumentException('Invalid export range.');return self::exports(true)->batch($r['id'],(int)$r['index'],(int)$r['offset']);});
+        $register('/exports/paged/(?P<id>[a-f0-9]{32})','DELETE',static fn($r)=>self::exports(true)->cancel($r['id']));
         $register('/exports', 'POST', static function($r){
             global $wpdb, $wp_version;
             $body=$r->get_json_params();if(!is_array($body))throw new \InvalidArgumentException('JSON export selections required.');
@@ -194,7 +201,7 @@ final class Plugin {
     }
     public static function admin(): void {
         if (!current_user_can('manage_options')) return;
-        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.3.6 — WordPress transfers and recovery.</p>';
+        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.3.7 — WordPress transfers and recovery.</p>';
         echo '<p>Imports require explicit destination setup and Push permission. Review the destination and selected resources in Zoer before importing.</p>';
         ConnectionAdmin::render();
         ExportAdmin::render();

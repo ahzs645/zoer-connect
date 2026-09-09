@@ -72,3 +72,10 @@ Install the release ZIP through WordPress's Upload Plugin screen. GitHub release
 ## Storage troubleshooting (0.3.6)
 
 Tools → Zoer Connect now reports a safe storage diagnostic code, the current path and PHP's filesystem restrictions (paths are visible to WordPress administrators only). Native status responses expose the code and a safe description. For first-time setup, an administrator can validate and configure a private folder outside the public roots without editing wp-config.php. The existing ZOER_CONNECT_STORAGE_DIR constant remains authoritative. The form refuses to move storage that contains transfers or has import protection installed; existing recovery data must remain at its original location. A host that does not permit any writable private folder still needs administrator configuration. No public uploads-folder fallback is used.
+
+
+## Paged exports (0.3.7)
+
+Updated Zoer clients can negotiate pagedExport and use exports/paged. Traversal and immutable file preparation checkpoint after at most 250 entries or four seconds per request (one file copy/hash can extend that soft budget). Manifests return 500 entries per page. Downloads pack up to 32 chunks and 1 MiB into one response. Limits are 100,000 files, 4 GiB total, 32 MiB per source file and a separate database snapshot bounded to 256 MiB/40 seconds. Active requests renew the one-hour idle expiry within a 24-hour maximum lifetime. Earlier clients keep their existing export flow and limits. No full-site external clone is claimed by protocol qualification alone.
+
+Exclude the connector REST namespace from any full-page hosting cache. Aram's Breeze cache required an explicit Never Cache URL entry even though connector responses set no-store. Confirm unauthenticated status returns 401 and a connection test reflects current plugin version and storage readiness.

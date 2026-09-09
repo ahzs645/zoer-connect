@@ -52,7 +52,7 @@ echo "Native key: hash-only storage, status access, push gate, HTTPS, owner demo
 // Every export route must enforce the same permission throughout a resumed download.
 [$key,$connection]=\ZoerConnect\ConnectionKey::create(1);$native->key=$key;
 $exportRoutes=[];foreach($routes as $path=>$methods)if(str_starts_with($path,'/exports'))foreach($methods as $method=>$route)$exportRoutes[$method.' '.$path]=$route['permission_callback'];
-assert_ok(count($exportRoutes)===5);
+assert_ok(count($exportRoutes)===10);
 foreach($exportRoutes as $label=>$permission){
  $connection['pull']=false;assert_ok($permission($native)->data['status']===403);
  $connection['push']=true;assert_ok($permission($native)->data['status']===403);

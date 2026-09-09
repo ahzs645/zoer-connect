@@ -11,6 +11,7 @@ test: lint
 	php tests/selection.php
 	php tests/export.php
 	php tests/remote-export.php
+	php tests/paged-export.php
 	php tests/database-export.php
 	php tests/related-replacement.php
 	php tests/coordinator.php
