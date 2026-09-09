@@ -2,6 +2,10 @@
 namespace ZoerConnect;
 
 /** Private, bounded staging. This class never writes into a live WordPress tree. */
+final class StorageUnavailable extends \RuntimeException {
+    public function __construct(public readonly string $reason) { parent::__construct($reason); }
+}
+
 final class StageStore {
     public const CHUNK = 262144;
     public const MAX_BYTES = 2147483648;
@@ -9,18 +13,18 @@ final class StageStore {
     private string $root;
 
     public function __construct(string $root, array $publicRoots) {
-        if (!$publicRoots || is_link($root)) throw new \RuntimeException('Private storage unavailable.');
-        $parent = realpath(dirname($root));
-        if (!$parent) throw new \RuntimeException('Storage parent does not exist.');
+        if (!$publicRoots || @is_link($root)) throw new StorageUnavailable('unsafe_path');
+        $parent = @realpath(dirname($root));
+        if (!$parent) throw new StorageUnavailable('parent_unavailable');
         $candidate = $parent . '/' . basename($root);
         foreach ($publicRoots as $public) {
-            $resolved = realpath($public);
+            $resolved = @realpath($public);
             if (!$resolved || $candidate === $resolved || str_starts_with($candidate, $resolved . '/')) {
-                throw new \RuntimeException('Storage must be outside all public document roots.');
+                throw new StorageUnavailable(!$resolved ? 'public_root_unavailable' : 'inside_public_root');
             }
         }
-        if (!is_dir($candidate) && !mkdir($candidate, 0700)) throw new \RuntimeException('Cannot create private storage.');
-        if (realpath($candidate) !== $candidate || !is_writable($candidate)) throw new \RuntimeException('Unsafe storage path.');
+        if (!@is_dir($candidate) && !@mkdir($candidate, 0700)) throw new StorageUnavailable('create_denied');
+        if (@realpath($candidate) !== $candidate || !@is_writable($candidate)) throw new StorageUnavailable('not_writable');
         $this->root = $candidate;
     }
 

@@ -5,7 +5,7 @@ namespace ZoerConnect;
 final class SettingsPreservation {
     public static function apply($db, string $stage): void {
         if(!preg_match('/^zoer_s_[a-f0-9]{16}$/D',$stage))throw new \InvalidArgumentException('Invalid staging table.');
-        $keys=['cron','home','siteurl','admin_email','new_admin_email','upload_path','upload_url_path',$db->prefix.'user_roles','zoer_connect_profiles','zoer_connect_connection'];
+        $keys=['cron','home','siteurl','admin_email','new_admin_email','upload_path','upload_url_path',$db->prefix.'user_roles','zoer_connect_profiles','zoer_connect_connection','zoer_connect_storage_dir'];
         foreach($keys as $key){
             $row=$db->get_row($db->prepare("SELECT option_name,option_value,autoload FROM `{$db->options}` WHERE option_name=%s",$key),ARRAY_A);
             if($db->delete($stage,['option_name'=>$key])===false)throw new \RuntimeException('Option preservation failed.');

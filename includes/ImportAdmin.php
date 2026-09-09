@@ -107,7 +107,7 @@ final class ImportAdmin {
     }
     public static function render(): void {
         if(!current_user_can('manage_options'))return;
-        $root=rtrim(ABSPATH,'/');$private=defined('ZOER_CONNECT_STORAGE_DIR')?ZOER_CONNECT_STORAGE_DIR:dirname($root).'/.zoer-connect';$notice='';$error='';
+        $root=rtrim(ABSPATH,'/');$private=Plugin::storageRoot();$notice='';$error='';
         if(($_SERVER['REQUEST_METHOD']??'')==='POST'&&isset($_POST['zoer_import_setup_action'])){try{$notice=self::submit($private,$root);}catch(\Throwable $e){$error=$e->getMessage();}}
         echo '<section><h2>Destination import setup</h2><p>Install the request fence before using this site as a Push destination. Existing PHP requests do not acquire its lock retroactively.</p>';
         if($notice)echo '<div class="notice notice-success inline"><p>'.esc_html($notice).'</p></div>';

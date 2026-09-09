@@ -53,7 +53,7 @@ final class DatabaseExporter {
                 foreach($keys as $key){if(!preg_match('/^[A-Za-z0-9_]+$/D',$key['Column_name']))throw new \RuntimeException('Unsupported primary key.');$order[]='`'.$key['Column_name'].'`';}
                 $order=implode(',',$order);
                 $where='';
-                if($table===$prefix.'options')$where=" WHERE option_name NOT IN ('zoer_connect_connection','zoer_connect_profiles') AND option_name NOT LIKE 'wpmdb%' AND option_name NOT LIKE '_transient_%' AND option_name NOT LIKE '_site_transient_%'";
+                if($table===$prefix.'options')$where=" WHERE option_name NOT IN ('zoer_connect_connection','zoer_connect_profiles','zoer_connect_storage_dir') AND option_name NOT LIKE 'wpmdb%' AND option_name NOT LIKE '_transient_%' AND option_name NOT LIKE '_site_transient_%'";
                 if($table===$prefix.'usermeta')$where=" WHERE meta_key NOT IN ('_application_passwords','session_tokens')";
                 for($offset=0;;$offset+=200){
                     $rows=$db->get_results("SELECT * FROM `$table`$where ORDER BY $order LIMIT 200 OFFSET $offset",ARRAY_A);

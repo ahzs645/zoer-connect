@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Zoer Connect
  * Description: Authenticated WordPress transfers and verified recovery for Zoer.
- * Version: 0.3.5
+ * Version: 0.3.6
  * Requires at least: 6.5
  * Requires PHP: 8.1
  * License: GPL-2.0-or-later

@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.3.5
+Stable tag: 0.3.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -22,6 +22,10 @@ Large local exports run in a DDEV CLI worker independently of HTTP time limits. 
 Upload and activate the plugin. Open Tools > Zoer Connect to generate connection info and configure direction permissions. Complete the separate import setup before enabling destination publication. Private storage must be outside the public document root. Deactivation/uninstall preserve private journals; do not remove the connector or MU bootstrap during an active transfer.
 
 == Changelog ==
+
+= 0.3.6 =
+* Safe storage diagnostics and first-time private-folder setup in WordPress admin.
+* Preserve the configured destination storage location and exclude it from exports.
 
 = 0.3.5 =
 Resumable block verification, backup, activation and restore for individual files up to 2 GiB. Atomic renames, conflict preflight, permissions and old-job recovery are retained. Requires a block-capable Zoer backend.

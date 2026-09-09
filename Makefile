@@ -6,6 +6,7 @@ lint:
 	@for file in includes/*.php; do php -l "$$file" || exit 1; done
 test: lint
 	php tests/run.php
+	php tests/storage.php
 	php tests/auth.php
 	php tests/selection.php
 	php tests/export.php

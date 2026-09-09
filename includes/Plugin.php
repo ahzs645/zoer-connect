@@ -20,16 +20,59 @@ final class Plugin {
         }elseif(!self::$applicationPassword || !current_user_can('manage_options'))return new \WP_Error('zoer_unauthorized','A connection key or administrator application password is required.',['status'=>401]);
         return true;
     }
+    public static function storageRoot(): string {
+        if(defined('ZOER_CONNECT_STORAGE_DIR'))return ZOER_CONNECT_STORAGE_DIR;
+        $configured=get_option('zoer_connect_storage_dir','');
+        return is_string($configured)&&$configured!=='' ? $configured : dirname(rtrim(ABSPATH,'/')).'/.zoer-connect';
+    }
+    private static function storageSettings(): void {
+        $error='';$notice='';
+        if(isset($_POST['zoer_storage_save'])){
+            check_admin_referer('zoer_connect_storage');
+            try {
+                if(defined('ZOER_CONNECT_STORAGE_DIR')||get_option('zoer_connect_storage_dir','')!==''||file_exists(ABSPATH.'wp-content/mu-plugins/000-zoer-connect-fence.php'))throw new \RuntimeException('Storage is already configured or import protection is installed. Keep the existing location for recovery; administrator configuration changes are required.');
+                $old=self::storageRoot();
+                if(is_dir($old)){ $entries=@scandir($old); if($entries===false||array_diff($entries,['.','..','lock']))throw new \RuntimeException('The current storage contains transfer data. Keep its location until transfers and recovery are complete.'); }
+                $path=trim((string)wp_unslash($_POST['zoer_storage_path']??''));
+                if(!str_starts_with($path,'/')||strlen($path)>1000||preg_match('/[\x00-\x1f]/',$path))throw new \RuntimeException('Enter an absolute private filesystem path.');
+                new StageStore($path,[ABSPATH,$_SERVER['DOCUMENT_ROOT']??'']);
+                update_option('zoer_connect_storage_dir',$path,false);$notice='Private storage configured. Test the connection in Zoer and resume the Pull.';
+            }catch(\Throwable $e){$error=$e instanceof StorageUnavailable ? $e->reason : $e->getMessage();}
+        }
+        $status=self::storageStatus();
+        echo '<h2>Storage diagnostics</h2><p><strong>'.esc_html($status['code']).'</strong>: '.esc_html($status['message']).'</p>';
+        echo '<p>Current path: <code>'.esc_html(self::storageRoot()).'</code></p><p>PHP filesystem restriction: <code>'.esc_html(ini_get('open_basedir')?:'not configured').'</code></p>';
+        if($notice)echo '<div class="notice notice-success"><p>'.esc_html($notice).'</p></div>';
+        if($error)echo '<div class="notice notice-error"><p>'.esc_html($error).'</p></div>';
+        if(!defined('ZOER_CONNECT_STORAGE_DIR')&&get_option('zoer_connect_storage_dir','')===''){
+            echo '<form method="post"><p>For first-time setup, choose a writable folder outside every public document root. Zoer will not move existing transfers. If PHP cannot access any private folder, ask the server administrator to provide one.</p>';
+            wp_nonce_field('zoer_connect_storage');
+            echo '<label>Private storage path <input class="regular-text" name="zoer_storage_path" required autocomplete="off"></label> <button class="button" name="zoer_storage_save" value="1">Validate and configure storage</button></form>';
+        }
+    }
     private static function store(): StageStore {
         $public = [ABSPATH];
-        if (empty($_SERVER['DOCUMENT_ROOT'])) throw new \RuntimeException('Document root cannot be verified.');
+        if (empty($_SERVER['DOCUMENT_ROOT'])) throw new StorageUnavailable('public_root_unavailable');
         $public[] = $_SERVER['DOCUMENT_ROOT'];
-        $root = defined('ZOER_CONNECT_STORAGE_DIR') ? ZOER_CONNECT_STORAGE_DIR : dirname(rtrim(ABSPATH, '/')) . '/.zoer-connect';
+        $root = self::storageRoot();
         return new StageStore($root, $public);
     }
+    public static function storageStatus(): array {
+        $messages=[
+            'unsafe_path'=>'The private storage location is a symbolic link or cannot be verified.',
+            'parent_unavailable'=>'PHP cannot access the parent of the private storage folder. Check the path and hosting filesystem restrictions.',
+            'public_root_unavailable'=>'PHP cannot verify the public document root. Check the hosting document-root configuration.',
+            'inside_public_root'=>'The storage folder is inside a public directory. Configure a private location outside every public document root.',
+            'create_denied'=>'PHP cannot create the private storage folder. Check parent-folder permissions, available space and hosting restrictions.',
+            'not_writable'=>'The private storage folder is not writable or resolves to an unexpected location.',
+            'unavailable'=>'Private storage could not be verified. Check the WordPress administrator storage diagnostics.',
+        ];
+        try { self::store(); return ['ready'=>true,'code'=>'ready','message'=>'Private storage is available.']; }
+        catch (\Throwable $error) { $code=$error instanceof StorageUnavailable ? $error->reason : 'unavailable'; return ['ready'=>false,'code'=>$code,'message'=>$messages[$code]??$messages['unavailable']]; }
+    }
     private static function exports(): RemoteExport {
-        if(empty($_SERVER['DOCUMENT_ROOT']))throw new \RuntimeException('Document root cannot be verified.');
-        $root=defined('ZOER_CONNECT_STORAGE_DIR')?ZOER_CONNECT_STORAGE_DIR:dirname(rtrim(ABSPATH,'/')).'/.zoer-connect';
+        if(empty($_SERVER['DOCUMENT_ROOT']))throw new StorageUnavailable('public_root_unavailable');
+        $root=self::storageRoot();
         $record=get_option(ConnectionKey::OPTION,[]);
         $owner=is_array($record)?(string)($record['hash']??''):'';
         if($owner==='')throw new \RuntimeException('Configure a connection key first.');
@@ -56,7 +99,7 @@ final class Plugin {
         if(!preg_match('~^/zoer-connect/v1/imports(?:/([a-f0-9]{32})(?:/(chunks|step|rollback|finish))?)?$~D',$route,$m))return $fail(404,'Unknown import operation.');
         try {
             self::store();
-            $root=defined('ZOER_CONNECT_STORAGE_DIR')?ZOER_CONNECT_STORAGE_DIR:dirname(rtrim(ABSPATH,'/')).'/.zoer-connect';
+            $root=self::storageRoot();
             $target=rtrim((string)get_option('home'),'/');
             $import=new TransferImport($wpdb,ABSPATH,$root,$record['hash'],$target,true);
             $method=$_SERVER['REQUEST_METHOD']??'GET';$id=$m[1]??null;$action=$m[2]??null;
@@ -92,6 +135,9 @@ final class Plugin {
                         if (strlen($request->get_body()) > 524288) return new \WP_Error('zoer_large_request', 'Request exceeds 512 KiB.', ['status' => 413]);
                         $result = $handler($request);
                         return is_wp_error($result) ? $result : new \WP_REST_Response($result, 200, ['Cache-Control' => 'no-store']);
+                    } catch (StorageUnavailable $e) {
+                        $storage=self::storageStatus();
+                        return new \WP_Error('zoer_storage_'.$storage['code'], $storage['message'], ['status'=>409]);
                     } catch (\InvalidArgumentException $e) {
                         return new \WP_Error('zoer_invalid', $e->getMessage(), ['status' => 400]);
                     } catch (\Throwable $e) {
@@ -107,12 +153,11 @@ final class Plugin {
             }]);
         }
         $register('/status', 'GET', static function () {
-            $ready = true;
-            try { self::store(); } catch (\Throwable $e) { $ready = false; }
+            $storage=self::storageStatus(); $ready=$storage['ready'];
             $record=get_option(ConnectionKey::OPTION,null);
-            $private=defined('ZOER_CONNECT_STORAGE_DIR')?ZOER_CONNECT_STORAGE_DIR:dirname(rtrim(ABSPATH,'/')).'/.zoer-connect';
+            $private=self::storageRoot();
             $importReady=ImportAdmin::ready($private,ABSPATH);
-            return ['version' => '0.3.5', 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => ['connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'artifactReuse'=>true, 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady], 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK];
+            return ['version' => '0.3.6', 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => ['connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'artifactReuse'=>true, 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady], 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK];
         });
         $register('/exports', 'POST', static function($r){
             global $wpdb, $wp_version;
@@ -149,7 +194,7 @@ final class Plugin {
     }
     public static function admin(): void {
         if (!current_user_can('manage_options')) return;
-        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.3.5 — WordPress transfers and recovery.</p>';
+        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.3.6 — WordPress transfers and recovery.</p>';
         echo '<p>Imports require explicit destination setup and Push permission. Review the destination and selected resources in Zoer before importing.</p>';
         ConnectionAdmin::render();
         ExportAdmin::render();
@@ -157,6 +202,7 @@ final class Plugin {
         echo '<details><summary>Advanced: application passwords</summary><p>API clients can also use WordPress application passwords. The Push permission above applies to these clients too once connection settings have been configured.</p>';
         echo '<p><a class="button" href="' . esc_url(admin_url('profile.php#application-passwords-section')) . '">Manage application passwords</a></p>';
         echo '<p>Revoke the application password from your profile to disconnect. WordPress application passwords inherit the account’s capabilities; they are not restricted to this plugin.</p></details>';
+        self::storageSettings();
         echo '<h2>Storage</h2><p>Staged files must be outside the public document root. A private sibling folder is used where permitted. Your administrator can configure ZOER_CONNECT_STORAGE_DIR in wp-config.php when necessary.</p>';
         echo '<p>Only one staging job is reserved at a time. Cancel it through the API to remove its files before starting another. Deactivation and uninstall preserve staged data.</p></div>';
     }
