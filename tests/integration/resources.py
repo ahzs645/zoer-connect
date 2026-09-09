@@ -4,6 +4,7 @@ sites=['ddev-zoer-connect-security-test-web','ddev-zoer-connect-transfer-peer-we
 def run(site,mode,label='',kind=''):
  return subprocess.check_output(['sudo','docker','exec','-e','ZOER_RESOURCE_MODE='+mode,'-e','ZOER_RESOURCE_LABEL='+label,'-e','ZOER_RESOURCE_KIND='+kind,site,'wp','--allow-root','--path=/var/www/html','eval-file','/tmp/zoer-resources.php'],text=True)
 seeded=[]
+completed=False
 try:
  for i,site in enumerate(sites):
   run(site,'seed',str(i));seeded.append(site)
@@ -16,5 +17,9 @@ try:
    subprocess.run(['sudo','docker','exec','-u','0',dest,'chown',uid,'/tmp/zoer-resource-data.json'],check=True)
   finally:os.unlink(path)
   for kind in ['themes','plugins','media','database']:print(source+' -> '+dest+': '+run(dest,'receive',kind=kind).strip())
+ completed=True
 finally:
- for site in seeded:run(site,'cleanup')
+ if completed:
+  for site in seeded:run(site,'cleanup')
+ else:
+  print('Test failed. Owned fixtures and recovery data retained for inspection.')

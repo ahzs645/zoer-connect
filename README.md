@@ -1,106 +1,70 @@
 # Zoer Connect
 
-An independent WordPress plugin repository. Builds an installable `zoer-connect-0.1.0.zip` without a Node toolchain or Composer dependencies. Original implementation; WP Migrate was inspected as a workflow reference, not copied.
+Zoer Connect transfers selected WordPress resources through HTTPS. Version 0.3.5 adds resumable block-based file publication up to 2 GiB per file. Version 0.3.4 introduced explicit shared-hosting replacement, preserves unrelated serialized plugin state, and reuses matching completed file uploads with fresh verification. SparkLab was successfully migrated from its managed local source to `https://sparklab.unbc.ca/`; all seven pages, representative file hashes and retained administrator access were verified. Qualification and live evidence is recorded in the parent repository’s `output/ui-audit/2026-09-08-zoer-connect-032/`. WP Migrate was used as a workflow reference; this implementation is independent.
 
-## Status: staging preview, not a publisher
+See the [operating guide and implementation lessons](../../docs/zoer-connect-operations.md) for first-site setup, recovery, WP Migrate comparisons and remaining work.
 
-Implemented: native WordPress application-password authentication over HTTPS, administrator capability checks, exact destination matching, one bounded private staging job, resumable chunks, identical retry handling, SHA-256 verification, cancellation, and a Tools → Zoer Connect setup page.
+## Transfer workflow
 
-**Not implemented:** database transfer, backups, file activation, rollback, a Zoer UI connector, automatic pairing, multisite, or live publication. `POST /publish` explicitly returns 501. Do not replace the current Hostinger publisher with this version. A verified staging result means only that the supplied bytes match the manifest, not that a website is published or healthy.
+The Zoer connection dialog supports remote Pull with pause/resume/cancel, and Push from a managed local DDEV source. The local source exports its database in a background CLI worker on the existing DDEV server, using one InnoDB consistent snapshot. It does not depend on a hosting HTTP request staying open. Verified, immutable artifacts are downloaded to private Zoer storage and uploaded in authenticated blocks.
 
-## Build and test
+The destination imports through `/wp-json/zoer-connect/v1/imports`. Each request advances a durable private journal. SQL is parsed as data rather than executed. Destination tables are staged and verified before cutover. Selected files retain verified backups. A must-use bootstrap blocks ordinary WordPress requests during activation and serves authenticated recovery before regular plugins or themes execute. Finish reopens the site. Rollback checks every affected table and file before restoring anything; it tolerates regenerated transient caches and refuses substantive later edits.
 
-Requirements: Python 3 for ZIP builds; PHP 8.1+ for checks.
+Destination home/siteurl, administrator accounts, roles, connector identity and selected environment settings are retained. Source authors map to the destination connection's administrator. Theme/plugin activation settings are preserved when their resources are not selected. Every nonidentity source table must have a matching existing destination schema; unsupported tables are rejected rather than silently omitted.
 
-```sh
-make test build
-```
+## Destination setup
 
-Build only: `python3 scripts/build.py`. Artifacts are in `dist/`, including a SHA-256 sidecar. The ZIP has one `zoer-connect/` root and only runtime PHP, WordPress readme, and licence files. Repeated builds produce identical bytes. GitHub Actions checks PHP 8.1–8.3 and uploads ZIP artifacts; no GitHub remote or release is configured yet.
+1. Install the plugin, pair its connector key with Zoer and enable Push.
+2. In Tools → Zoer Connect, select **Shared-hosting migration**, acknowledge replacement, then enable it. This installs the site-level MU protection and binds the setup to this site and protection code. It does not inspect shared PHP processes or require a hosting restart.
+3. In Zoer, test the connection, choose the local source and resources, prepare an export, confirm the destination address and replacement, then import.
+4. Finish to reopen the site; inspect pages and administrator access. Use the same connection to recover interruptions. Rollback retains conflict checks and refuses detected later edits.
 
-## Install and connect
+This is replacement, not a concurrent-edit merge. Earlier requests and external writers are not guaranteed to stop; avoid editing during migration. Requests reaching the site's MU protection pause during application/recovery. Original tables are retained by table renames and selected files have backups. Detected content changes can stop activation or prevent rollback. Coherent private journal storage and working filesystem/database locks remain necessary; distributed multi-host coordination is not provided.
 
-1. Upload the ZIP in WordPress → Plugins → Add New → Upload Plugin and activate it.
-2. Open Tools → Zoer Connect. Use HTTPS and a dedicated WordPress application password on an administrator account. WordPress handles revocation from the account profile.
-3. An API client sends HTTP Basic authentication to `https://YOUR-SITE/wp-json/zoer-connect/v1/status`. Do not place credentials in URLs, logs or source files. Cookie login alone is rejected by this API.
-4. Confirm `stagingReady: true` and the returned destination before creating a job.
+Advanced verified-worker setup remains available for isolated environments that can prove all PHP workers adopted the fence. It retains Linux `/proc` inventory checks and writer declarations. Shared-hosting mode never records those declarations as established facts.
 
-Application passwords inherit the user's WordPress permissions, including other REST endpoints. They are not scoped connector credentials. The future Zoer integration must store them in the host secret store and never expose them to browsers or generic computer environments.
+Changing fence code invalidates new-import readiness. Existing recovery remains available. Do not delete the connector, earliest MU bootstrap or private journals while a transfer is active.
 
-Storage defaults to `.zoer-connect` beside WordPress's root. It must resolve outside both ABSPATH and the server's DOCUMENT_ROOT; otherwise staging fails closed. An administrator may set `ZOER_CONNECT_STORAGE_DIR` to a private writable directory in wp-config.php. Do not change DOCUMENT_ROOT to bypass the check. PHP cannot infer other web-server aliases: the operator must ensure the chosen directory is not exposed by another vhost or alias. No database dumps or PHP files are staged under public_html.
+## Supported boundary
 
-Deactivation and uninstall preserve staging files deliberately. Cancel the job before uninstalling to remove its data. The authenticated POST /expire operation removes staging jobs older than 24 hours, excluding any job with a publication journal. It is not automatically scheduled yet. One active job reserves up to 2 GiB; no concurrent second bundle is accepted.
+- Single-site WordPress 6.5+, PHP 8.1+, private writable storage outside every public document root.
+- Existing matching InnoDB tables with primary keys; foreign keys and triggers are rejected. Identity tables remain at the destination.
+- Local exports: 2 GiB total, 30-minute worker deadline, immutable block checksums and restart/cancel handling. A failed worker starts a fresh transaction rather than appending an incomplete snapshot.
+- Destination SQL: at most 2 GiB; row batches at most 4 MiB. With a block-capable Zoer backend, individual selected files and existing destination originals support up to 2 GiB. Upload, verification, backup and restoration process 256 KiB blocks with durable progress. Older clients/jobs retain the legacy 32 MiB path. The managed-local export total remains 2 GiB; this is not an unlimited-size migration.
+- Importable files: selected themes, plugins and media. Core, wp-config, MU plugins, connector files, executable uploads, symlinks and unsafe paths are excluded.
+- Advanced verified-worker setup requires readable Linux `/proc` process information and standard, single-threaded PHP-FPM, CGI or LSAPI workers. It checks every PHP process under the same operating-system account; a long-running CLI job or another site’s idle worker may delay readiness until it exits or adopts protection. Renamed/custom PHP interpreters, embedded or multithreaded runtimes, hidden process inventories and forked/unfenced background writers are unsupported. This is a compatibility check, not a guarantee for every shared host.
+- Early WordPress drop-ins, nonstandard content locations and external SQL writers are unsupported by the request fence.
+- Hosted remote Pull still uses a bounded single-request database snapshot (256 MiB / up to 40 seconds), failing closed on interruption. Large local-to-hosted Push uses the independent DDEV worker instead.
+- Revoking/rotating a key invalidates its generation. Existing jobs cannot be rebound automatically to a new key. Keep the original authorized connection available for recovery.
+- Literal replacements preserve unrelated serialized bytes without deserialization. Serialized objects or references requiring URL changes remain unsupported; regex replacement of serialized objects is refused.
+- Matching terminal uploads can supply cached files under the same destination/key generation. Reused files are hashed before activation; database chunks are uploaded again.
+- Private backup journals are retained. This is replacement, not merging concurrent edits or preserving arbitrary source user identities.
 
-## API v1
+## Authentication and API
 
-All routes require HTTPS and an administrator application password. Requests are JSON, at most 512 KiB. Responses must not be cached.
+Connection keys contain 256 random bits, are shown once, and are stored only as hashes in WordPress. Zoer stores its copy encrypted as a host-only secret. Requests use `X-Zoer-Connection`, never URL credentials. HTTPS, current administrator ownership and per-direction permission are checked. Public import/recovery uses native connector keys; application passwords remain supported for legacy staging endpoints.
 
-- `GET /status`: version, target, storage readiness and explicit capabilities.
-- `GET /jobs`: discover jobs after a lost create response.
-- `POST /expire`: remove staging jobs older than 24 hours, preserving publication journals.
-- `POST /jobs`: create a job from the manifest below; retain its returned `id`. An uncertain create must not be automatically repeated.
-- `GET /jobs/{id}`: state and one current byte offset per file. Resume from those offsets.
-- `POST /jobs/{id}/chunks`: `{ "index": 0, "offset": 0, "data": "BASE64" }`, decoded chunks ≤256 KiB. Retrying the exact same bytes is idempotent. Gaps and conflicting retries are rejected.
-- `POST /jobs/{id}/verify`: checks every length and SHA-256, then freezes writes with state `staged`.
-- `DELETE /jobs/{id}`: remove private staged data and release the reservation.
-- `POST /jobs/{id}/publish`: 501, never mutates the live site.
+- `/status`: canonical destination, version, readiness, permissions and capabilities.
+- `/exports`: remote export create/status/step/chunks/cancel.
+- `/imports`: idempotent create; `/{id}` status; `/{id}/chunks`, `/step`, `/finish`, `/rollback`.
+- `/jobs`: legacy private file staging. Its old `/publish` route remains unimplemented; imports use the dedicated protocol.
 
-Example manifest (hash is SHA-256 of `abc`):
+Import requests are bounded to 2 MiB JSON; decoded upload blocks are 256 KiB. Job state, source/destination binding, sequence IDs and checksums determine retries. Clients never supply executable SQL or private filesystem paths.
 
-```json
-{
-  "version": 1,
-  "target": "https://example.org",
-  "files": [{
-    "path": "wp-content/themes/demo/style.css",
-    "bytes": 3,
-    "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-  }]
-}
-```
+## Verification and packaging
 
-Only themes, plugins and uploads paths are supported. Paths are conservative ASCII; dot segments/files, traversal, duplicate/colliding paths, the connector itself and executable uploads are rejected. Artifacts are stored under numeric private names; no archive extraction or SQL execution is available. The source must enumerate a selected bundle, not blindly send a full DDEV archive. Core, wp-config.php, host-specific mu-plugins and server configuration are outside the current contract.
+Run `make test` for PHP lint and artifact-free suites. Real MariaDB/WordPress checks live under `tests/integration/`; run these only against an explicitly authorized disposable destination. Integration evidence is recorded under the parent Zoer repository's `output/ui-audit/`.
 
-## Next publication milestones
+After editing `WriteFence.php` or `RequestDrain.php`, run `python3 scripts/seal-runtime.py` before testing. Compiled source fingerprints prevent stale cached PHP code from certifying a new request-protection generation.
 
-1. Add job discovery, bounded verification steps, expiration, scoped pairing credentials and the Zoer connector/client UI.
-2. Destination backup with a verified restore path, durable receipt outside migrated tables, and exclusive publication lock.
-3. Stage database tables under a temporary prefix using a defined data format; preserve destination credentials, connector identity and chosen live user accounts. Apply serialization-safe URL/path transforms at export.
-4. Activate files and tables with a recoverable journal and maintenance window. A database rename cannot make a combined filesystem/database change atomic; recovery must cover interruption between both phases.
-5. Verify home, researcher counts, assets, permalinks and admin login before reporting published. Test rollback and interrupted writes on a disposable WordPress destination before any live installation.
+The source controller seals a whole-file SHA-256 and every block hash from the same verified bytes. The destination verifies each block against that authenticated manifest; it does not serialize a PHP SHA context across requests. Original files use recorded block digests for backup/conflict/restore verification. Existing legacy journals continue through their original recovery implementation.
 
-This repository has its own `.git` history under Zoer's `wordpress-plugins/` directory. It is a local nested repository, not yet a Git submodule with a remote URL. After choosing a remote, push this repository and register it as a proper submodule in Zoer; do not create a gitlink pointing at an unpublished commit.
+Only after integration qualification, run `make test-package` and `make build`. Packaging is deterministic and includes runtime PHP, readme and licence only, with a SHA-256 sidecar in `dist/`. A local build is not a live plugin update or website publication.
 
-## Development: file publication engine
+## GitHub releases
 
-`includes/FilePublication.php` now implements selected-file backup, verified activation, a persistent per-file journal, process-resume behavior, and rollback. It rejects symlink destinations and refuses to overwrite content edited since planning or publication. It is not exposed through REST and is not a complete site publisher. It does not coordinate a maintenance window, database cutover, modes/ownership restoration or full-site health checks. Backup hashes are verified; crash/power-loss durability and real WordPress integration still need testing. No files are deleted merely because they are absent from the manifest.
+The private repository is `ahzs645/zoer-connect`. Branch pushes and pull requests run the PHP 8.1–8.3 suites. Packaging additionally requires a version-specific qualification receipt in `releases/`, matching every packaged runtime file and the deterministic ZIP checksum. A runtime change therefore needs fresh integration qualification before packaging succeeds; a receipt is a recorded maintainer assertion, not an automated integration test.
 
-Unit tests exercise backup-before-activation, resuming with a new instance, rollback, post-publication edit protection, and staging job discovery/expiry. Tests ran in the existing DDEV PHP image in an isolated network-disabled container with a temporary filesystem; no live WordPress files or database were changed.
+To release: update the plugin header, API/admin version and readme stable tag together; run the PHP and authorized disposable WordPress integration checks; build and verify the package; record its file hashes/checksum and results in `releases/VERSION.json` and `releases/VERSION.md`. Commit the scoped plugin changes and push an annotated `vVERSION` tag. The workflow rejects mismatched tags and publishes the ZIP plus checksum only after all checks pass. Failed runs publish no release; fix the failure before retrying. Do not move an already published release tag.
 
-## Development: database staging primitive
-
-`includes/TableStage.php` now provides experimental staging for an existing, explicitly selected InnoDB table, transactional retry tracking, count verification, retained original table at activation, and restore. It is internal only and cannot migrate a whole WordPress site. Options and user tables are deliberately rejected until identity preservation is implemented. Source and destination schemas must already match. See the integration test report for tested behavior and unresolved safeguards.
-
-## Development: recovery and identity policy
-
-RecoveryCoordinator now journals file/table activation and reverses attempted changes after a failure. SettingsPreservation retains destination URLs, administrator email, upload configuration and roles, keeps Zoer Connect active, and removes transferred transient caches. TableStage accepts the options table only with this explicit preservation policy; user and usermeta tables remain rejected. These primitives are not exposed as a production publisher. Their disposable-site integration tests passed, including combined recovery after a simulated lost response. Maintenance handling, durable public recovery access, author identity mapping and Zoer UI integration remain incomplete.
-
-## Development: selection/filter planning
-
-Selection.php implements inventory-based all/active/selected/except modes; an ordered exclusion glob subset (`*`, `?`, `**`, directory patterns, root anchoring, `!` exceptions); media hash-change and strictly-after timestamp filtering; post type/revision, spam-comment and transient-option filtering. 26 individual cases pass, including invalid selection/path/pattern rejection. This is a pure planning layer, not an exporter or public selector UI. It does not discover active themes/plugins itself. Callers must supply trusted inventory, including both child and parent theme dependencies when applicable.
-
-Glob behavior is intentionally not full gitignore compatibility: bracket classes and backslash escaping are rejected; excluded-parent re-inclusion rules differ. Do not present it as full gitignore support. Filtering rows alone does not reconcile related metadata, relationships, attachments or authors; filtered database replacement remains unavailable. Regex/serialized replacement, GUID controls, gzip, mu-plugin/other/core migration, saved profiles and the integrated Zoer push/pull flow remain unimplemented. The plugin must not yet be installed as a production migration solution on SparkLab.
-
-## Development: dependent rows and replacements
-
-RelatedRows now filters posts, postmeta, comments, commentmeta and post term relationships together. It refuses excluded parent posts/comments and featured-image references. Taxonomy definitions remain to preserve hierarchy; counts require recounting. Custom plugin relations, embedded block references and author mapping are not handled, so this is not a complete graph migration.
-
-Replacement now supports literal and delimited PCRE replacements, including nested serialized arrays/scalars. It refuses serialized objects/references and malformed serialization, limits input/output size and recursion, and bounds PCRE backtracking. It preserves array keys. It does not yet provide dry-run previews, JSON-specific replacement rules or a GUID policy. Thirteen targeted tests passed; these helpers are not wired into the exporter or UI. Core/mu-plugin migration and saved profiles remain unimplemented. No production capability has been enabled.
-
-## Development: saved file-export profiles and WordPress admin screen
-
-Tools → Zoer Connect now renders profile save/delete forms and a file-export download action. Both handlers require manage_options, single-site WordPress and action-specific nonces. Profile fields are allowlisted and credentials rejected. The screen selects entire categories (themes, plugins, media, mu-plugins, core) with exclusion patterns; active/individual resource selection is not wired into this form yet. Profiles are stored in a non-autoloaded WordPress option.
-
-FileExporter builds a ZIP with a manifest and wordpress/ file tree. Core and mu-plugin export are opt-in, wp-config.php and Zoer Connect are excluded, source symlinks are refused, and compressed entries are verified against the reviewed hashes. Limits are 32 MiB/file, 20,000 files, 512 MiB total. Export is synchronous and still needs bounded background processing for production workloads. It exports files only, not a database. Core/mu-plugin destination migration is NOT enabled by this exporter.
-
-Nine exporter/profile cases passed; deterministic plugin ZIP checks passed. Installed on the disposable security-test site. Interactive UI verification was attempted but browser control lost access to its tab, so save/delete/download UI behavior is not yet browser-verified. Complete remote publication and Zoer UI integration remain unfinished.
+Install the release ZIP through WordPress's Upload Plugin screen. GitHub release publishing does not yet provide WordPress dashboard update discovery, and does not push website content. Private release assets require GitHub access to download; do not put a personal GitHub token into WordPress.

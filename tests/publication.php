@@ -6,17 +6,19 @@ $base=sys_get_temp_dir().'/zoer-publish-'.bin2hex(random_bytes(6));
 mkdir($base);mkdir($base.'/public');mkdir($base.'/private');mkdir($base.'/public/wp-content/themes/demo',0755,true);
 function ok($x) { if(!$x)throw new RuntimeException('Assertion failed'); }
 try {
- $live=$base.'/public/wp-content/themes/demo/style.css';file_put_contents($live,'old');
+ $live=$base.'/public/wp-content/themes/demo/Screenshot PM,1.png';file_put_contents($live,'old');chmod($live,0600);
  $source=$base.'/private/0.part';file_put_contents($source,'new');
- $manifest=['version'=>1,'target'=>'example','files'=>[['path'=>'wp-content/themes/demo/style.css','bytes'=>3,'sha256'=>hash('sha256','new')]]];
+ $manifest=['version'=>1,'target'=>'example','files'=>[['path'=>'wp-content/themes/demo/Screenshot PM,1.png','bytes'=>3,'sha256'=>hash('sha256','new')]]];
  $p=new FilePublication($base.'/public',$base.'/private');$p->prepare($manifest,[$source]);
  $p->step();ok(file_get_contents($live)==='old');
  $p=new FilePublication($base.'/public',$base.'/private'); // Resume in a new process-equivalent instance.
  $p->step();$p->step();ok(file_get_contents($live)==='new');
+ clearstatcache(true,$live);ok((fileperms($live)&0777)===0600);
  ok($p->step()['status']==='verification_required');
  file_put_contents($live,'edited');
  $refused=false;try{$p->rollbackStep();}catch(RuntimeException $e){$refused=true;}ok($refused);
  file_put_contents($live,'new');$p->rollbackStep();ok(file_get_contents($live)==='old');
+ clearstatcache(true,$live);ok((fileperms($live)&0777)===0600);
  ok($p->rollbackStep()['status']==='rolled_back');
  echo "File backup, activation, resume, rollback and edit protection passed\n";
 } finally {

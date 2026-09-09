@@ -17,6 +17,12 @@ try {
         $bad = $manifest; $bad['files'][0]['path'] = $path;
         rejects(fn()=>StageStore::validateManifest($bad,$manifest['target']),$path);
     }
+    foreach (["wp-content/themes/demo/Font_wdth,wght.woff2","wp-content/uploads/2024/08/Screenshot\u{202f}PM.png"] as $path) {
+        $valid=$manifest;$valid['files'][0]['path']=$path;check(StageStore::validateManifest($valid,$manifest['target'])['files'][0]['path']===$path,'preserves real WordPress filename');
+    }
+    foreach (["wp-content/uploads/x\u{202e}.png","wp-content/uploads/x%2f..%2fa.png","wp-content/uploads/x\\a.png","wp-content/uploads/x\0.png","wp-content/uploads/x\xff.png"] as $path) {
+        $bad=$manifest;$bad['files'][0]['path']=$path;rejects(fn()=>StageStore::validateManifest($bad,$manifest['target']),'unsafe Unicode/control/encoded path');
+    }
     $bad = $manifest; $bad['files'][]=$bad['files'][0];
     rejects(fn()=>StageStore::validateManifest($bad,$manifest['target']),'duplicate');
     $bad = $manifest; $bad['files'][]=['path'=>'wp-content/themes/demo','bytes'=>0,'sha256'=>hash('sha256','')];

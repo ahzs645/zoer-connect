@@ -44,7 +44,7 @@ final class FilePublication {
                 if(!$source || is_link($staged[$i]) || !str_starts_with($source,$this->private.'/') || !is_file($source)) throw new \RuntimeException('Invalid staged source.');
                 if(filesize($source)!==$file['bytes'] || hash_file('sha256',$source)!==$file['sha256']) throw new \RuntimeException('Staged hash mismatch.');
                 if(file_exists($target) && !is_file($target)) throw new \RuntimeException('Target is not a regular file.');
-                $entries[]=['path'=>$file['path'],'source'=>$source,'sha256'=>$file['sha256'],'oldHash'=>is_file($target)?hash_file('sha256',$target):null,'phase'=>'pending'];
+                $entries[]=['path'=>$file['path'],'source'=>$source,'sha256'=>$file['sha256'],'oldHash'=>is_file($target)?hash_file('sha256',$target):null,'mode'=>is_file($target)?(fileperms($target)&0777):0644,'phase'=>'pending'];
             }
             $state=['status'=>'backing_up','cursor'=>0,'entries'=>$entries]; $this->write($state); return $state;
         });
@@ -73,11 +73,24 @@ final class FilePublication {
                 if(!is_dir(dirname($target)) && !mkdir(dirname($target),0755,true)) throw new \RuntimeException('Cannot create destination folder.');
                 $tmp=$target.'.zoer-tmp-'.bin2hex(random_bytes(8));
                 try {
-                    if(!copy($e['source'],$tmp) || hash_file('sha256',$tmp)!==$e['sha256'] || !rename($tmp,$target)) throw new \RuntimeException('Activation failed.');
+                    if(!copy($e['source'],$tmp) || hash_file('sha256',$tmp)!==$e['sha256'] || !chmod($tmp,$e['mode']??0644) || !rename($tmp,$target)) throw new \RuntimeException('Activation failed.');
                 } finally { if(is_file($tmp)) unlink($tmp); }
                 $s['entries'][$i]['phase']='applied';
             }
             $s['cursor']++; $this->write($s); return $s;
+        });
+    }
+    /** Read-only check used across every file before a coordinated rollback
+     * starts changing any table or file. Caller retains its writer fence. */
+    public function rollbackPreflight(): void {
+        $this->locked(function() {
+            $s=$this->read();
+            foreach($s['entries'] as $i=>$e) {
+                if(!in_array($e['phase'],['applying','applied'],true))continue;
+                $target=$this->target($e['path']);$actual=is_file($target)?hash_file('sha256',$target):null;
+                if($actual!==$e['sha256'] && $actual!==$e['oldHash'])throw new \RuntimeException('Destination edited after publication; refusing rollback overwrite.');
+                if($e['oldHash']!==null){$backup=$this->private.'/backup-'.$i;if(!is_file($backup)||hash_file('sha256',$backup)!==$e['oldHash'])throw new \RuntimeException('Backup corrupt.');}
+            }
         });
     }
     public function rollbackStep(): array {
@@ -96,7 +109,7 @@ final class FilePublication {
                     $backup=$this->private.'/backup-'.$i;
                     if(!is_file($backup) || hash_file('sha256',$backup)!==$e['oldHash']) throw new \RuntimeException('Backup corrupt.');
                     $tmp=$target.'.zoer-restore-'.bin2hex(random_bytes(8));
-                    try { if(!copy($backup,$tmp) || hash_file('sha256',$tmp)!==$e['oldHash'] || !rename($tmp,$target)) throw new \RuntimeException('Restore failed.'); }
+                    try { if(!copy($backup,$tmp) || hash_file('sha256',$tmp)!==$e['oldHash'] || !chmod($tmp,$e['mode']??0644) || !rename($tmp,$target)) throw new \RuntimeException('Restore failed.'); }
                     finally { if(is_file($tmp)) unlink($tmp); }
                 }
             }

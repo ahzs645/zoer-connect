@@ -13,5 +13,9 @@ $value=serialize(['url'=>'https://old.example','nested'=>serialize(['x'=>'old.ex
 $result=unserialize(Replacement::apply($value,$rules));expect($result['url']==='https://longer.example.org','serialized lengths preserved');expect(unserialize($result['nested'])['x']==='longer.example.org','nested serialization');
 expect(Replacement::apply('abc-123',[['mode'=>'regex','find'=>'/([0-9]+)/','replace'=>'[$1]']])==='abc-[123]','regex captures');
 reject(fn()=>Replacement::apply('abc',[['mode'=>'regex','find'=>'/[invalid/','replace'=>'x']]),'invalid regex refused');
-reject(fn()=>Replacement::apply('O:8:"stdClass":0:{}',$rules),'object deserialization refused');
-reject(fn()=>Replacement::apply('a:1:{broken}',$rules),'malformed serialization refused');
+$schedule='O:30:"ActionScheduler_SimpleSchedule":1:{s:9:"timestamp";i:1788910000;}';
+expect(Replacement::apply($schedule,$rules)===$schedule,'unrelated serialized schedule preserved byte-for-byte');
+expect(Replacement::apply('a:1:{broken}',$rules)==='a:1:{broken}','unrelated opaque state preserved');
+reject(fn()=>Replacement::apply('O:8:"stdClass":1:{s:3:"url";s:11:"old.example";}',$rules),'object requiring replacement refused without instantiation');
+reject(fn()=>Replacement::apply('a:1:{old.example}',$rules),'malformed serialization requiring replacement refused');
+reject(fn()=>Replacement::apply($schedule,[['mode'=>'regex','find'=>'/timestamp/','replace'=>'x']]),'regex object handling remains refused');

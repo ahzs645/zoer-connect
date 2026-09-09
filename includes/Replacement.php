@@ -5,6 +5,11 @@ final class Replacement {
     public static function apply(string $value,array $rules): string {
         if(strlen($value)>1048576||count($rules)>50)throw new \InvalidArgumentException('Replacement limit exceeded.');
         foreach($rules as $r)if(!is_array($r)||!is_string($r['find']??null)||$r['find']===''||!is_string($r['replace']??null)||!in_array($r['mode']??null,['literal','regex'],true))throw new \InvalidArgumentException('Invalid replacement rule.');
+        // Unrelated serialized plugin state must survive byte-for-byte. Do not
+        // deserialize objects (e.g. Action Scheduler schedules) to change nothing.
+        $possible=false;
+        foreach($rules as $r)if($r['mode']==='regex'||str_contains($value,$r['find'])){$possible=true;break;}
+        if(!$possible)return $value;
         return self::walk($value,$rules,0);
     }
     private static function walk($value,array $rules,int $depth) {

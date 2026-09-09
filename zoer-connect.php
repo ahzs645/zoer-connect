@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Zoer Connect
- * Description: Authenticated connection and verified migration staging for Zoer. Live publication is not yet supported.
- * Version: 0.1.0
+ * Description: Authenticated WordPress transfers and verified recovery for Zoer.
+ * Version: 0.3.5
  * Requires at least: 6.5
  * Requires PHP: 8.1
  * License: GPL-2.0-or-later
@@ -10,8 +10,11 @@
  */
 defined('ABSPATH') || exit;
 require_once __DIR__ . '/includes/StageStore.php';
+require_once __DIR__ . '/includes/ConnectionKey.php';
+require_once __DIR__ . '/includes/ConnectionAdmin.php';
 require_once __DIR__ . '/includes/Plugin.php';
 \ZoerConnect\Plugin::boot();
 
-foreach (["Selection", "ExportProfile", "FileExporter", "ExportAdmin"] as $class) require_once __DIR__ . "/includes/" . $class . ".php";
+foreach (["Selection", "ExportProfile", "FileExporter", "ExportAdmin", "DatabaseExporter", "RemoteExport", "WriteFence", "ImportAdmin"] as $class) require_once __DIR__ . "/includes/" . $class . ".php";
 \ZoerConnect\ExportAdmin::boot();
+\ZoerConnect\ImportAdmin::boot();

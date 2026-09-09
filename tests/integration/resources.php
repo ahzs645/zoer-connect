@@ -18,6 +18,7 @@ if($mode==='receive'){
  $before=[];foreach($paths as $k=>$path)$before[$k]=file_get_contents(ABSPATH.$path);
  $oldRows=$wpdb->get_results("SELECT * FROM `$table` ORDER BY id",ARRAY_A);
  $id=bin2hex(random_bytes(8));$private=sys_get_temp_dir().'/zoer-resource-'.$id;mkdir($private,0700);
+ $restored=false;
  try{
   if($kind==='database'){
    $p=new \ZoerConnect\TableStage($wpdb,$table,$id);$p->prepare();$p->chunk(0,$data['database']);$p->verify(count($data['database']),1);$p->activate();
@@ -33,10 +34,13 @@ if($mode==='receive'){
    if($wpdb->get_results("SELECT * FROM `$table` ORDER BY id",ARRAY_A)!==$oldRows)throw new RuntimeException('Unselected database changed');
    $p->rollbackStep();$p->rollbackStep();if(file_get_contents(ABSPATH.$paths[$kind])!==$before[$kind])throw new RuntimeException('Restore mismatch');
   }
+  $restored=true;
   echo "PASS $kind transfer, unselected isolation, rollback\n";
  }finally{
-  foreach(['zoer_s_'.$id,'zoer_b_'.$id,'zoer_l_'.$id] as $t)$wpdb->query("DROP TABLE IF EXISTS `$t`");
-  foreach(glob($private.'/*') as $f)unlink($f);rmdir($private);
+  if($restored){
+   foreach(['zoer_s_'.$id,'zoer_b_'.$id,'zoer_l_'.$id] as $t)$wpdb->query("DROP TABLE IF EXISTS `$t`");
+   foreach(glob($private.'/*') as $f)unlink($f);rmdir($private);
+  }
  }
  return;
 }

@@ -17,13 +17,28 @@ try{
  zreject(fn()=>$p->chunk(0,[['id'=>2,'value'=>'conflict']]));
  zreject(fn()=>$p->verify(3,1));$p->verify(2,1);
  zreject(fn()=>$p->chunk(1,$rows));
+ $wpdb->update('zoer_s_'.$id,['value'=>'tampered'],['id'=>2]);
+ zreject(fn()=>$p->activate());
+ zassert($wpdb->get_var("SELECT value FROM `$table` WHERE id=1")==='original');
+ $wpdb->update('zoer_s_'.$id,['value'=>$rows[0]['value']],['id'=>2]);
+ $wpdb->update($table,['value'=>'concurrent edit'],['id'=>1]);
+ zreject(fn()=>$p->activate());
+ $wpdb->update($table,['value'=>'original'],['id'=>1]);
  $p->activate();$p->activate();
  zassert((int)$wpdb->get_var("SELECT COUNT(*) FROM `$table`")===2);
  zassert($wpdb->get_var("SELECT value FROM `$table` WHERE id=2")===$rows[0]['value']);
- $p=new \ZoerConnect\TableStage($wpdb,$table,$id);$p->rollback();$p->rollback();
+ $p=new \ZoerConnect\TableStage($wpdb,$table,$id);
+ $wpdb->update($table,['value'=>'post-publication edit'],['id'=>2]);
+ zreject(fn()=>$p->rollback());
+ zassert($wpdb->get_var("SELECT value FROM `$table` WHERE id=2")==='post-publication edit');
+ $wpdb->update($table,['value'=>$rows[0]['value']],['id'=>2]);
+ $wpdb->update('zoer_b_'.$id,['value'=>'corrupt backup'],['id'=>1]);
+ zreject(fn()=>$p->rollback());
+ $wpdb->update('zoer_b_'.$id,['value'=>'original'],['id'=>1]);
+ $p->rollback();$p->rollback();
  zassert($wpdb->get_var("SELECT value FROM `$table` WHERE id=1")==='original');
  zreject(fn()=>new \ZoerConnect\TableStage($wpdb,$wpdb->users,$id));
- echo "PASS database stage, transactional retry, unsafe columns, count checks, Unicode, cutover and rollback\n";
+ echo "PASS database staging, retries, Unicode, verified-stage tampering, concurrent destination edits, post-publication edits, corrupt backups, cutover and rollback\n";
 }finally{
  foreach([$table,'zoer_s_'.$id,'zoer_b_'.$id,'zoer_l_'.$id] as $name)$wpdb->query("DROP TABLE IF EXISTS `$name`");
 }

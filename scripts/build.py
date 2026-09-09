@@ -6,10 +6,18 @@ import hashlib
 import re
 root = Path(__file__).resolve().parents[1]
 version = re.search(r'Version: ([0-9.]+)', (root / 'zoer-connect.php').read_text()).group(1)
+# Old compiled PHP must never certify newly changed fence code.
+for name in ['WriteFence','RequestDrain']:
+    source=(root/'includes'/f'{name}.php').read_text()
+    pattern=r"private const SOURCE_HASH='([a-f0-9]{64})';"
+    match=re.search(pattern,source)
+    normalized=re.sub(pattern,"private const SOURCE_HASH='"+'0'*64+"';",source,count=1)
+    if not match or hashlib.sha256(normalized.encode()).hexdigest()!=match.group(1):
+        raise RuntimeError('Run scripts/seal-runtime.py after editing request protection')
 out = root / 'dist'
 out.mkdir(exist_ok=True)
 archive = out / f'zoer-connect-{version}.zip'
-files = [root / 'zoer-connect.php', root / 'readme.txt', root / 'LICENSE'] + sorted((root / 'includes').glob('*.php'))
+files = [root / 'zoer-connect.php', root / 'readme.txt', root / 'LICENSE'] + [p for p in sorted((root / 'includes').glob('*.php')) if p.name != 'PeerImport.php']
 with ZipFile(archive, 'w', compression=ZIP_DEFLATED) as z:
     for file in files:
         if file.is_symlink():
