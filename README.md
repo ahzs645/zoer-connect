@@ -2,7 +2,7 @@
 
 Zoer Connect transfers selected WordPress resources through HTTPS. Version 0.3.5 adds resumable block-based file publication up to 2 GiB per file. Version 0.3.4 introduced explicit shared-hosting replacement, preserves unrelated serialized plugin state, and reuses matching completed file uploads with fresh verification. SparkLab was successfully migrated from its managed local source to `https://sparklab.unbc.ca/`; all seven pages, representative file hashes and retained administrator access were verified. Qualification and live evidence is recorded in the parent repository’s `output/ui-audit/2026-09-08-zoer-connect-032/`. WP Migrate was used as a workflow reference; this implementation is independent.
 
-See the [operating guide and implementation lessons](../../docs/zoer-connect-operations.md) for first-site setup, recovery, WP Migrate comparisons and remaining work.
+See the [operating guide and implementation lessons](https://github.com/ahzs645/zoer/blob/main/docs/zoer-connect-operations.md) for first-site setup, recovery, WP Migrate comparisons and remaining work.
 
 ## Transfer workflow
 
