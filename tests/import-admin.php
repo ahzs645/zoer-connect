@@ -34,6 +34,11 @@ try{
  $_POST=$shared+['replacement_accepted'=>'1'];$admin=false;denied(fn()=>ImportAdmin::submit($private,$root),'shared mode requires administrator');$admin=true;
  $_POST['_wpnonce']='invalid';denied(fn()=>ImportAdmin::submit($private,$root),'shared mode requires its nonce');$_POST=$shared+['replacement_accepted'=>'1'];ImportAdmin::submit($private,$root);
  check(ImportAdmin::mode($private,$root)==='shared-replacement','shared mode works without worker declarations');
+ file_put_contents($root.'/wp-content/advanced-cache.php','<?php');file_put_contents($root.'/wp-content/object-cache.php','<?php');
+ check(ImportAdmin::ready($private,$root),'explicit shared mode supports cache drop-ins');
+ file_put_contents($root.'/wp-content/db.php','<?php');check(!ImportAdmin::ready($private,$root),'shared mode still rejects database drop-ins');unlink($root.'/wp-content/db.php');
+ denied(fn()=>(new WriteFence($private,$root))->install(),'strict setup still rejects cache drop-ins');
+ unlink($root.'/wp-content/advanced-cache.php');unlink($root.'/wp-content/object-cache.php');
  $r=json_decode(file_get_contents($private.'/import-readiness.json'),true);check($r['replacementAccepted']&&!isset($r['workersVerified'])&&!isset($r['noExternalWriters']),'shared receipt never claims verified isolation');
  $home='https://other.example';check(!ImportAdmin::ready($private,$root),'shared receipt binds destination');$home='https://destination.example';
  file_put_contents($private.'/write-fence.json','{}');denied(fn()=>ImportAdmin::submit($private,$root),'shared setup cannot overwrite active recovery');unlink($private.'/write-fence.json');

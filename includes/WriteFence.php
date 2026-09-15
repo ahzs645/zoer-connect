@@ -6,7 +6,7 @@ namespace ZoerConnect;
  * deployment policy; an HTTP maintenance flag cannot fence direct SQL clients.
  */
 final class WriteFence {
-    private const SOURCE_HASH='97a7a754603191ee22badc6467e275aaa358c61614542cb71cd1220f4380e866';
+    private const SOURCE_HASH='bdff5d75aaf6b2ace3348d59016098daef717ad37b00f98373e065acce8d57ed';
     public static function runtimeVerified(): bool {
         $source=@file_get_contents(__FILE__);
         if($source===false)return false;
@@ -23,36 +23,47 @@ final class WriteFence {
         if (!$private||!$root||is_link($privateRoot)||$private===$root||str_starts_with($private,$root.'/')) throw new \RuntimeException('Private write fence storage is required.');
         $this->private=$private; $this->root=$root;
     }
-    private function bootstrap(): string {
+    private function bootstrap(bool $sharedCaches=false): string {
         $plugin=$this->root.'/wp-content/plugins/zoer-connect/includes/';
-        return "<?php\n// Zoer Connect request fence: keep before ordinary plugins and MU plugins.\ndefined('ABSPATH') || exit;\nrequire_once ".var_export($plugin.'WriteFence.php',true).";\n\\ZoerConnect\\WriteFence::boot(".var_export($this->private,true).", ".var_export($this->root,true).", static function (string \$route) {\n require_once ".var_export($plugin.'Plugin.php',true).";\n return \\ZoerConnect\\Plugin::earlyImportRecovery(\$route);\n});\n";
+        return "<?php\n".($sharedCaches?"// Shared-hosting cache coexistence; early cache responses are outside this fence.\n":"")."// Zoer Connect request fence: keep before ordinary plugins and MU plugins.\ndefined('ABSPATH') || exit;\nrequire_once ".var_export($plugin.'WriteFence.php',true).";\n\\ZoerConnect\\WriteFence::boot(".var_export($this->private,true).", ".var_export($this->root,true).", static function (string \$route) {\n require_once ".var_export($plugin.'Plugin.php',true).";\n return \\ZoerConnect\\Plugin::earlyImportRecovery(\$route);\n});\n";
     }
-    private function compatible(): bool {
+    private function compatible(bool $sharedCaches=false): bool {
         if (defined('WP_CONTENT_DIR') && realpath(WP_CONTENT_DIR)!==realpath($this->root.'/wp-content')) return false;
         if (defined('WPMU_PLUGIN_DIR') && realpath(WPMU_PLUGIN_DIR)!==realpath($this->root.'/wp-content/mu-plugins')) return false;
         // These execute before MU plugins and could write or serve an early response.
         foreach (['advanced-cache.php','object-cache.php','db.php','sunrise.php','maintenance.php'] as $name)
-            if (file_exists($this->root.'/wp-content/'.$name)||is_link($this->root.'/wp-content/'.$name)) return false;
+            if (is_link($this->root.'/wp-content/'.$name)) return false;
+            elseif (file_exists($this->root.'/wp-content/'.$name) && (!$sharedCaches || !in_array($name,['advanced-cache.php','object-cache.php'],true) || !is_file($this->root.'/wp-content/'.$name))) return false;
         return true;
     }
     public function installed(): bool {
-        if (!$this->compatible()) return false;
+        if (!$this->compatible($this->sharedCaches())) return false;
         $dir=$this->root.'/wp-content/mu-plugins'; $path=$dir.'/'.self::MU;
-        if (is_link($dir)||is_link($path)||!is_file($path)||file_get_contents($path)!==$this->bootstrap()) return false;
+        if (is_link($dir)||is_link($path)||!is_file($path)||file_get_contents($path)!==$this->bootstrap($this->sharedCaches())) return false;
         foreach (glob($dir.'/*.php')?:[] as $file) if (strcmp(basename($file),self::MU)<0) return false;
         return true;
     }
     /** Explicit setup step, never invoked as a side effect of normal requests. */
-    public function install(): void {
-        if (!$this->compatible()) throw new \RuntimeException('Early WordPress drop-ins and custom content paths are unsupported by this fence.');
+    public function sharedCaches(): bool {
+        $path=$this->root.'/wp-content/mu-plugins/'.self::MU;
+        return !is_link($path)&&is_file($path)&&file_get_contents($path)===$this->bootstrap(true);
+    }
+    public function install(bool $sharedCaches=false): void {
+        $this->control(fn()=>$this->installLocked($sharedCaches));
+    }
+    private function installLocked(bool $sharedCaches): void {
+        if ($this->marker()!==null) throw new \RuntimeException('Finish or recover the active import before changing setup.');
+        if (!$this->compatible($sharedCaches)) throw new \RuntimeException('Early WordPress drop-ins and custom content paths are unsupported by this fence.');
         $dir=$this->root.'/wp-content/mu-plugins'; $path=$dir.'/'.self::MU;
         if (is_link($dir)||is_link($path)) throw new \RuntimeException('MU bootstrap must not be a symlink.');
         if (!is_dir($dir)&&!mkdir($dir,0755,true)) throw new \RuntimeException('Cannot create MU directory.');
         foreach (glob($dir.'/*.php')?:[] as $file) if (strcmp(basename($file),self::MU)<0) throw new \RuntimeException('An earlier MU plugin prevents a reliable fence.');
-        $body=$this->bootstrap();
+        $body=$this->bootstrap($sharedCaches);
+        $previous=null;
         if (file_exists($path)) {
-            if (file_get_contents($path)!==$body) throw new \RuntimeException('Existing MU fence differs; inspect it before replacement.');
-            return;
+            if (file_get_contents($path)===$body) return;
+            if (file_get_contents($path)!==$this->bootstrap(!$sharedCaches)) throw new \RuntimeException('Existing MU fence differs; inspect it before replacement.');
+            $previous=file_get_contents($path);
         }
         // Never expose a partial *.php file to another WordPress request.
         $tmp=$dir.'/.zoer-fence-'.bin2hex(random_bytes(8)).'.tmp';
@@ -62,7 +73,16 @@ final class WriteFence {
             if (fwrite($h,$body)!==strlen($body)||!fflush($h)||(function_exists('fsync')&&!fsync($h))||!chmod($tmp,0644)) throw new \RuntimeException('Cannot write MU bootstrap.');
             fclose($h);$h=null;
             // link publishes atomically without ever overwriting another installer.
-            if(!link($tmp,$path))throw new \RuntimeException('Cannot atomically install MU bootstrap.');
+            if ($previous!==null) {
+                if (file_get_contents($path)!==$previous || !rename($tmp,$path)) throw new \RuntimeException('MU bootstrap changed during setup.');
+            } elseif(function_exists('link')) {
+                if(!link($tmp,$path))throw new \RuntimeException('Cannot atomically install MU bootstrap.');
+            } else {
+                // Shared hosts may disable hard links. The private control lock
+                // serializes our installers; only rename fully flushed bytes.
+                clearstatcache(true,$path);
+                if(file_exists($path)||is_link($path)||!rename($tmp,$path))throw new \RuntimeException('Cannot atomically install MU bootstrap.');
+            }
         } finally {if(is_resource($h))fclose($h);if(is_file($tmp))unlink($tmp);}
     }
     private function identity(string $id,string $binding): void {
@@ -105,10 +125,10 @@ final class WriteFence {
         });
     }
     /** Caller has verified completion or restoration; never release on timeout. */
-    public function release(string $id,string $binding): void {
+    public function release(string $id,string $binding,?callable $beforeRelease=null): void {
         $this->identity($id,$binding);
         if ($this->marker()===null) return; // Replay after release persisted but caller journal write was interrupted.
-        $this->exclusive($id,$binding,function(){if(!unlink($this->private.'/write-fence.json'))throw new \RuntimeException('Cannot release write fence.');});
+        $this->exclusive($id,$binding,function()use($beforeRelease){if($beforeRelease!==null)$beforeRelease();if(!unlink($this->private.'/write-fence.json'))throw new \RuntimeException('Cannot release write fence.');});
     }
     public function enter(): void {
         if (self::$lease!==null) return;

@@ -1,6 +1,6 @@
 <?php
 namespace ZoerConnect;
-foreach(['StageStore','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
+foreach(['StageStore','FileComparison','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
 
 /** Authenticated callers supply the current native credential generation. All
  * mutable job inputs are private and bound to that generation and destination.
@@ -36,6 +36,7 @@ final class TransferImport {
     }
     private function artifact(array $a,bool $database): array {
         if(!is_int($a['bytes']??null)||$a['bytes']<0||$a['bytes']>($database||isset($a['chunkSha256'])?2147483648:33554432)||!preg_match('/^[a-f0-9]{64}$/D',$a['sha256']??''))throw new \InvalidArgumentException('Invalid artifact size or digest.');
+        if(array_key_exists('expectedDestinationSha256',$a)&&$a['expectedDestinationSha256']!==null&&(!is_string($a['expectedDestinationSha256'])||!preg_match('/^[a-f0-9]{64}$/D',$a['expectedDestinationSha256'])))throw new \InvalidArgumentException('Invalid destination precondition.');
         if(!$database&&isset($a['chunkSha256']))ChunkedFilePublication::validate($a);
         if($database){
             $hashes=$a['chunkSha256']??null;
@@ -108,10 +109,18 @@ final class TransferImport {
     }
     private function table(array $t): TableStage {return new TableStage($this->db,$t['name'],$t['id'],true);}
     private function publication(array $s,int $index): FilePublication|ChunkedFilePublication {$class=isset($s['artifacts'][$index]['chunkSha256'])?ChunkedFilePublication::class:FilePublication::class;return new $class($this->root,$this->dir($s['id']).'/artifact-'.$index);}
+    /** Repeatable invalidation occurs while requests remain paused. A failed
+     * cache backend leaves recovery available and never silently reopens. */
+    private function reopen(array $s): void {
+        $this->fence->release($s['id'],$s['binding'],static function()use($s){
+            if (($s['hasDb']||$s['selectedThemes']||$s['selectedPlugins']) && function_exists('wp_cache_flush') && wp_cache_flush()===false)
+                throw new \RuntimeException('Object cache flush failed; retry finish or recovery.');
+        });
+    }
     public function step(string $id): array {
         return $this->locked(function()use($id){
             $s=$this->read($id);
-            if(in_array($s['phase'],['finishing','rollback_refusal_release'],true)){$this->fence->release($id,$s['binding']);$s['phase']='complete';$this->save($s);}
+            if(in_array($s['phase'],['finishing','rollback_refusal_release'],true)){$this->reopen($s);$s['phase']='complete';$this->save($s);}
             if(in_array($s['phase'],['complete','rolled_back','cancelled','verification_required','paused'],true))return $this->summary($s);
             if($s['phase']==='reusing_artifacts'){
                 $previous=$this->read($s['reuseImportId']);
@@ -125,7 +134,7 @@ final class TransferImport {
                         $from=$this->dir($previous['id']).'/artifact-'.$i.'/data';$to=$this->dir($id).'/artifact-'.$i.'/data';
                         clearstatcache(true,$from);clearstatcache(true,$to);
                         if(is_link($from)||!is_file($from)||filesize($from)!==$a['bytes'])throw new \RuntimeException('Reusable artifact is incomplete.');
-                        if(filesize($to)!==$a['bytes']){
+                        if(filesize($to)!==$a['bytes']&&function_exists('link')){
                             if(is_file($to.'.link'))unlink($to.'.link');
                             if(!link($from,$to.'.link')||!rename($to.'.link',$to))throw new \RuntimeException('Cannot reuse staged artifact.');
                         }
@@ -226,6 +235,7 @@ final class TransferImport {
             if($i>=count($s['artifacts'])){$s['phase']='applying_files';$s['cursor']=0;return;}
             $a=$s['artifacts'][$i];
             if($a['kind']==='file'&&!isset($a['chunkSha256'])&&is_file($this->root.'/'.$a['path'])&&filesize($this->root.'/'.$a['path'])>33554432)throw new \RuntimeException('An existing destination file exceeds the bounded 32 MiB publication limit.');
+            if($a['kind']==='file'&&array_key_exists('expectedDestinationSha256',$a)&&!is_file($dir.'/artifact-'.$i.'/publication.json')&&FileComparison::fingerprint($this->root,$a['path'])!==$a['expectedDestinationSha256'])throw new \RuntimeException('Destination changed since preview. Roll back and compare again.');
             if($a['kind']==='file'&&!is_file($dir.'/artifact-'.$i.'/publication.json'))$this->publication($s,$i)->prepare(['version'=>1,'target'=>$this->target,'files'=>[$a]],[$dir.'/artifact-'.$i.'/data']);
             $s['cursor']++;return;
         }
@@ -265,7 +275,7 @@ final class TransferImport {
     public function rollback(string $id): array {
         return $this->locked(function()use($id){
             $s=$this->read($id);
-            if($s['phase']==='rollback_refusal_release'){$this->fence->release($id,$s['binding']);$s['phase']='complete';$this->save($s);}
+            if($s['phase']==='rollback_refusal_release'){$this->reopen($s);$s['phase']='complete';$this->save($s);}
             if($s['phase']==='paused'){$s['phase']=$s['resumePhase'];unset($s['resumePhase']);}
             if(in_array($s['phase'],['rolled_back','cancelled'],true))return $this->summary($s);
             if(in_array($s['phase'],['uploading','reusing_artifacts','checking_artifacts','scanning_database'],true)){$s['phase']='cancelled';$this->save($s);return $this->summary($s);}
@@ -276,11 +286,11 @@ final class TransferImport {
                 if(($s['rollbackFromComplete']??false)&&in_array($s['phase'],['rollback_reset','rollback_reset_files','rollback_preflight_tables','rollback_preflight_files'],true)){
                     // No destination mutation occurred. Keep its later edits and reopen the site.
                     $s['phase']='rollback_refusal_release';$s['rollbackRefused']=true;$this->save($s);
-                    $this->fence->release($id,$s['binding']);$s['phase']='complete';$this->save($s);
+                    $this->reopen($s);$s['phase']='complete';$this->save($s);
                 }
                 throw $e;
             }
-            if($s['phase']==='rollback_ready'){$this->fence->release($id,$s['binding']);$s['phase']='rolled_back';$this->save($s);}
+            if($s['phase']==='rollback_ready'){$this->reopen($s);$s['phase']='rolled_back';$this->save($s);}
             return $this->summary($s);
         });
     }
@@ -291,6 +301,6 @@ final class TransferImport {
         return $this->locked(function()use($id){$s=$this->read($id);if($s['phase']==='paused'){$s['phase']=$s['resumePhase'];unset($s['resumePhase']);$this->save($s);}return $this->summary($s);});
     }
     public function finish(string $id): array {
-        return $this->locked(function()use($id){$s=$this->read($id);if($s['phase']==='complete')return $this->summary($s);if(!in_array($s['phase'],['verification_required','finishing'],true))throw new \RuntimeException('Import is not ready for final verification.');if($s['phase']==='verification_required'){$this->fence->exclusive($id,$s['binding'],fn()=>$this->destination());$s['phase']='finishing';$this->save($s);}$this->fence->release($id,$s['binding']);$s['phase']='complete';$this->save($s);return $this->summary($s);});
+        return $this->locked(function()use($id){$s=$this->read($id);if($s['phase']==='complete')return $this->summary($s);if(!in_array($s['phase'],['verification_required','finishing'],true))throw new \RuntimeException('Import is not ready for final verification.');if($s['phase']==='verification_required'){$this->fence->exclusive($id,$s['binding'],fn()=>$this->destination());$s['phase']='finishing';$this->save($s);}$this->reopen($s);$s['phase']='complete';$this->save($s);return $this->summary($s);});
     }
 }

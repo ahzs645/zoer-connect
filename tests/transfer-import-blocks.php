@@ -17,7 +17,7 @@ try{
  rejects(fn()=>$general->create($genericBody)); // actual DB identity still points to peer
  $db->url=$other;$generic=$general->create($genericBody);check($general->rollback($generic['id'])['phase']==='cancelled','Generic local fixture not supported');$db->url=$target;
  $p=$new();$p->installFence();$data=str_repeat('verified-file-',50000);$path='wp-content/themes/fixture/style.css';file_put_contents($base.'/public/'.$path,'original');
- $body=['id'=>str_repeat('a',32),'target'=>$target,'sourceUrl'=>'https://source.example','sourcePrefix'=>'source_','wordpressOnlyWriters'=>true,'files'=>[['path'=>$path,'bytes'=>strlen($data),'sha256'=>hash('sha256',$data)]]];
+ $body=['id'=>str_repeat('a',32),'target'=>$target,'sourceUrl'=>'https://source.example','sourcePrefix'=>'source_','wordpressOnlyWriters'=>true,'files'=>[['path'=>$path,'bytes'=>strlen($data),'sha256'=>hash('sha256',$data),'expectedDestinationSha256'=>hash('sha256','original')]]];
  $body['files'][0]['chunkSha256']=array_map(fn($v)=>hash('sha256',$v),str_split($data,StageStore::CHUNK));
  $body['migrationMode']='shared-replacement';unset($body['wordpressOnlyWriters']);rejects(fn()=>$p->create($body));$body['replacementAccepted']=true;
  $s=$p->create($body);check($p->create($body)['id']===$s['id'],'Creation retry not idempotent');
@@ -53,5 +53,21 @@ try{
  file_put_contents($base.'/public/'.$path,$data);
  for($i=0;$i<30;$i++){$s=$new()->rollback($s['id']);if($s['phase']==='rolled_back')break;}
  check($s['phase']==='rolled_back'&&file_get_contents($base.'/public/'.$path)==='original','Post-finish rollback retry failed.');
+ $body['id']=str_repeat('c',32);unset($body['reuseImportId']);
+ $s=$new()->create($body);
+ for($offset=0;$offset<strlen($data);$offset+=StageStore::CHUNK)$new()->chunk($s['id'],0,$offset,substr($data,$offset,StageStore::CHUNK));
+ file_put_contents($base.'/public/'.$path,'changed after preview');$conflict=false;
+ for($i=0;$i<40;$i++){try{$s=$new()->step($s['id']);}catch(Throwable $e){$conflict=str_contains($e->getMessage(),'Destination changed since preview');break;}}
+ check($conflict&&file_get_contents($base.'/public/'.$path)==='changed after preview','Stale preview overwrote a live edit');
+ for($i=0;$i<40;$i++){$s=$new()->rollback($s['id']);if(in_array($s['phase'],['rolled_back','cancelled'],true))break;}
+ check(!file_exists($base.'/private/write-fence.json')&&file_get_contents($base.'/public/'.$path)==='changed after preview','Conflict rollback changed live edit or retained fence');
+ $body['id']=str_repeat('d',32);$body['files'][0]['expectedDestinationSha256']=hash('sha256','changed after preview');
+ $s=$new()->create($body);for($offset=0;$offset<strlen($data);$offset+=StageStore::CHUNK)$new()->chunk($s['id'],0,$offset,substr($data,$offset,StageStore::CHUNK));
+ for($i=0;$i<40;$i++){$s=$new()->step($s['id']);if(is_file($base.'/private/import-'.$s['id'].'/artifact-0/publication.json'))break;}
+ file_put_contents($base.'/public/'.$path,str_repeat('x',strlen('changed after preview')));$conflict=false;
+ for($i=0;$i<40;$i++){try{$s=$new()->step($s['id']);}catch(Throwable $e){$conflict=str_contains($e->getMessage(),'Destination changed since preview');break;}}
+ check($conflict,'An edit after preparation bypassed the preview precondition');
+ for($i=0;$i<40;$i++){$s=$new()->rollback($s['id']);if(in_array($s['phase'],['rolled_back','cancelled'],true))break;}
+ check(!file_exists($base.'/private/write-fence.json'),'Conflict after preparation retained fence');
  echo "PASS public importer explicit enablement and destination identity, generation binding, creation/chunk retry, multi-request upload/activation, resumed rollback and explicit finish\n";
 }finally{$walk=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST);foreach($walk as $e)$e->isDir()?rmdir($e->getPathname()):unlink($e->getPathname());rmdir($base);}

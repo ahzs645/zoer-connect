@@ -86,7 +86,9 @@ final class Plugin {
         require_once __DIR__.'/ImportAdmin.php';
         $fail=static function(int $status,string $message): array { http_response_code($status);return ['code'=>'zoer_import_unavailable','message'=>$message]; };
         if (!is_ssl() || is_multisite()) return $fail(401,'HTTPS and a single WordPress site are required.');
-        $record=get_option(ConnectionKey::OPTION,[]);
+        // Persistent caches must never keep a revoked key valid during recovery.
+        $raw=$wpdb->get_var($wpdb->prepare("SELECT option_value FROM `{$wpdb->options}` WHERE option_name=%s",ConnectionKey::OPTION));
+        $record=is_string($raw)?@unserialize($raw,['allowed_classes'=>false]):null;
         $token=(string)($_SERVER['HTTP_X_ZOER_CONNECTION']??'');
         if(!is_array($record)||!ConnectionKey::matches($token,$record))return $fail(401,'Invalid or revoked connection key.');
         if(!ConnectionKey::permits($record,'push'))return $fail(403,'Push permission is disabled.');
@@ -100,7 +102,7 @@ final class Plugin {
         try {
             self::store();
             $root=self::storageRoot();
-            $target=rtrim((string)get_option('home'),'/');
+            $target=rtrim((string)$wpdb->get_var($wpdb->prepare("SELECT option_value FROM `{$wpdb->options}` WHERE option_name=%s",'home')),'/');
             $import=new TransferImport($wpdb,ABSPATH,$root,$record['hash'],$target,true);
             $method=$_SERVER['REQUEST_METHOD']??'GET';$id=$m[1]??null;$action=$m[2]??null;
             if($method==='GET'&&$id&&!$action)return $import->status($id);
@@ -159,7 +161,7 @@ final class Plugin {
             $record=get_option(ConnectionKey::OPTION,null);
             $private=self::storageRoot();
             $importReady=ImportAdmin::ready($private,ABSPATH);
-            return ['version' => '0.3.7', 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => ['pagedExport'=>true,'connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'artifactReuse'=>true, 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady], 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK];
+            return ['version' => '0.3.10', 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => ['pagedExport'=>true,'connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'selectivePush'=>true,'artifactReuse'=>function_exists('link'), 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady], 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK];
         });
         $register('/exports/paged', 'POST', static function($r){global $wpdb,$wp_version;$b=$r->get_json_params();if(!is_array($b))throw new \InvalidArgumentException('JSON selections required.');return self::exports(true)->create($b,['url'=>untrailingslashit(home_url()),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version]);});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})/step','POST',static function($r){global $wpdb;return self::exports(true)->step($r['id'],static fn($p)=>DatabaseExporter::write($wpdb,$p));});
@@ -177,6 +179,12 @@ final class Plugin {
         $register('/exports/(?P<id>[a-f0-9]{32})/chunks','GET',static function($r){
             foreach(['index','offset'] as $key)if(!is_string($r[$key])||!preg_match('/^(0|[1-9][0-9]{0,12})$/D',$r[$key]))throw new \InvalidArgumentException('Non-negative integer range required.');
             return self::exports()->chunk($r['id'],(int)$r['index'],(int)$r['offset']);
+        });
+        $register('/files/compare', 'POST', static function($r){
+            require_once __DIR__.'/FileComparison.php';
+            $body=$r->get_json_params();
+            if(!is_array($body)||!is_array($body['files']??null))throw new \InvalidArgumentException('File list required.');
+            return FileComparison::compare(ABSPATH,$body['files']);
         });
         $register('/jobs', 'GET', static fn() => self::store()->jobs());
         $register('/expire', 'POST', static fn() => ['expired' => self::store()->expire(time())]);
@@ -201,7 +209,7 @@ final class Plugin {
     }
     public static function admin(): void {
         if (!current_user_can('manage_options')) return;
-        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.3.7 — WordPress transfers and recovery.</p>';
+        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.3.10 — WordPress transfers and recovery.</p>';
         echo '<p>Imports require explicit destination setup and Push permission. Review the destination and selected resources in Zoer before importing.</p>';
         ConnectionAdmin::render();
         ExportAdmin::render();

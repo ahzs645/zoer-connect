@@ -8,6 +8,7 @@ test: lint
 	php tests/run.php
 	php tests/storage.php
 	php tests/auth.php
+	php tests/file-comparison.php
 	php tests/selection.php
 	php tests/export.php
 	php tests/remote-export.php
@@ -21,7 +22,11 @@ test: lint
 	php tests/peer-import.php
 	php tests/snapshot-stream.php
 	php tests/write-fence.php
+	php tests/cache-compatibility.php
+	php -d disable_functions=link tests/cache-compatibility.php
+	php tests/cache-auth.php
 	php tests/transfer-import.php
+	php -d disable_functions=link tests/transfer-import.php
 	php tests/transfer-import-blocks.php
 	php tests/table-stage.php
 	php tests/import-admin.php

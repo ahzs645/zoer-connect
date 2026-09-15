@@ -35,6 +35,7 @@ final class FilePublication {
     public function prepare(array $manifest, array $staged): array {
         return $this->locked(function() use($manifest,$staged) {
             if(is_file($this->private.'/publication.json')) throw new \RuntimeException('Publication already exists.');
+            $requested=$manifest['files'];
             $manifest=StageStore::validateManifest($manifest,$manifest['target']);
             if(count($manifest['files'])!==count($staged)) throw new \InvalidArgumentException('Staged file count mismatch.');
             $entries=[];
@@ -44,7 +45,9 @@ final class FilePublication {
                 if(!$source || is_link($staged[$i]) || !str_starts_with($source,$this->private.'/') || !is_file($source)) throw new \RuntimeException('Invalid staged source.');
                 if(filesize($source)!==$file['bytes'] || hash_file('sha256',$source)!==$file['sha256']) throw new \RuntimeException('Staged hash mismatch.');
                 if(file_exists($target) && !is_file($target)) throw new \RuntimeException('Target is not a regular file.');
-                $entries[]=['path'=>$file['path'],'source'=>$source,'sha256'=>$file['sha256'],'oldHash'=>is_file($target)?hash_file('sha256',$target):null,'mode'=>is_file($target)?(fileperms($target)&0777):0644,'phase'=>'pending'];
+                $oldHash=is_file($target)?hash_file('sha256',$target):null;
+                if(array_key_exists('expectedDestinationSha256',$requested[$i])&&$oldHash!==$requested[$i]['expectedDestinationSha256'])throw new \RuntimeException('Destination changed since preview.');
+                $entries[]=['path'=>$file['path'],'source'=>$source,'sha256'=>$file['sha256'],'oldHash'=>$oldHash,'mode'=>is_file($target)?(fileperms($target)&0777):0644,'phase'=>'pending'];
             }
             $state=['status'=>'backing_up','cursor'=>0,'entries'=>$entries]; $this->write($state); return $state;
         });

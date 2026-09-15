@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.3.7
+Stable tag: 0.3.10
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -22,6 +22,17 @@ Large local exports run in a DDEV CLI worker independently of HTTP time limits. 
 Upload and activate the plugin. Open Tools > Zoer Connect to generate connection info and configure direction permissions. Complete the separate import setup before enabling destination publication. Private storage must be outside the public document root. Deactivation/uninstall preserve private journals; do not remove the connector or MU bootstrap during an active transfer.
 
 == Changelog ==
+
+= 0.3.10 =
+Support shared hosts that disable PHP hard links: atomically install flushed protection files under the setup lock and fall back to uploading artifacts.
+
+= 0.3.9 =
+Shared-hosting cache drop-in coexistence, database-backed recovery authentication, and retryable object-cache invalidation before reopening. Page caches must exclude connector API routes and be purged separately.
+
+= 0.3.8 =
+* Add authenticated destination file comparison for selective Push.
+* Reject selected file imports when the destination changed after preview.
+* Comparison excludes protected paths and destination files over 32 MiB; full-export chunked transfers remain available.
 
 = 0.3.7 =
 * Add bounded resumable file scanning, manifest pages and batched downloads for updated Zoer clients.

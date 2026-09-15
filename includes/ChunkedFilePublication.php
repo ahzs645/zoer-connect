@@ -1,5 +1,6 @@
 <?php
 namespace ZoerConnect;
+require_once __DIR__.'/FileComparison.php';
 
 /** One authenticated artifact, bounded I/O and durable cursors across requests.
  * The caller holds the destination writer fence through activation/recovery. */
@@ -34,6 +35,7 @@ final class ChunkedFilePublication {
         $src=realpath($sources[0]);if(!$src||is_link($sources[0])||!str_starts_with($src,$this->private.'/')||$this->size($src)!==$a['bytes'])throw new \RuntimeException('Invalid staged file.');
         $target=$this->target($a['path']);$old=$this->size($target);if($old!==null&&$old>self::LIMIT)throw new \RuntimeException('Destination original exceeds 2 GiB.');
         if(disk_free_space($this->private)<($old??0)+67108864)throw new \RuntimeException('Insufficient backup space.');
+        if(array_key_exists('expectedDestinationSha256',$a)&&FileComparison::fingerprint($this->root,$a['path'])!==$a['expectedDestinationSha256'])throw new \RuntimeException('Destination changed since preview.');
         $s=['version'=>2,'status'=>'backing_up','phase'=>'source_check','offset'=>0,'file'=>$a,'source'=>$src,'oldBytes'=>$old,'oldBlocks'=>[],'mode'=>$old===null?0644:(fileperms($target)&0777),'token'=>bin2hex(random_bytes(12)),'activated'=>false];$this->save($s);return $s;
     });}
     private function check(string $path,int $bytes,array $hashes,int &$offset):bool{
@@ -53,7 +55,7 @@ final class ChunkedFilePublication {
         case 'source_check':if($this->check($s['source'],$a['bytes'],$a['chunkSha256'],$s['offset']))$this->next($s,'old_scan');break;
         case 'old_scan':
             if($s['oldBytes']===null){if($this->size($target)!==null)throw new \RuntimeException('Destination appeared.');$this->next($s,'copy_new');$s['status']='applying';break;}
-            $data=$this->block($target,$s['offset'],$s['oldBytes']);if($s['offset']<$s['oldBytes'])$s['oldBlocks'][]=hash('sha256',$data);$s['offset']+=strlen($data);if($s['offset']===$s['oldBytes'])$this->next($s,'backup_copy');break;
+            $data=$this->block($target,$s['offset'],$s['oldBytes']);if($s['offset']<$s['oldBytes'])$s['oldBlocks'][]=hash('sha256',$data);$s['offset']+=strlen($data);if($s['offset']===$s['oldBytes']){if(array_key_exists('expectedDestinationSha256',$a)&&FileComparison::fingerprint($this->root,$a['path'])!==$a['expectedDestinationSha256'])throw new \RuntimeException('Destination changed since preview.');$this->next($s,'backup_copy');}break;
         case 'backup_copy':if($this->copyBlock($target,$backup,$s['oldBytes'],$s['oldBlocks'],$s['offset']))$this->next($s,'backup_check');break;
         case 'backup_check':if($this->check($backup,$s['oldBytes'],$s['oldBlocks'],$s['offset'])){$this->next($s,'copy_new');$s['status']='applying';}break;
         case 'copy_new':

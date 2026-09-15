@@ -72,7 +72,7 @@ final class ImportAdmin {
             if(file_exists(rtrim($private,'/').'/write-fence.json'))throw new \RuntimeException('Finish or recover the active import before changing setup.');
             if($action==='shared'){
                 if(($_POST['replacement_accepted']??null)!=='1')throw new \InvalidArgumentException('Confirm replacement of the selected destination resources.');
-                (new WriteFence($private,$root))->install();
+                (new WriteFence($private,$root))->install(true);
                 $identity=self::identity($private,$root);
                 $administratorId=(int)get_current_user_id();if($administratorId<1)throw new \RuntimeException('An administrator identity is required.');
                 self::write($private,self::READY,['version'=>3,...$identity,'mode'=>'shared-replacement','replacementAccepted'=>true,'confirmedAt'=>time(),'administratorId'=>$administratorId]);
@@ -114,7 +114,7 @@ final class ImportAdmin {
         if($error)echo '<div class="notice notice-error inline"><p>'.esc_html($error).'</p></div>';
         if(self::mode($private,$root)==='shared-replacement'){echo '<p><strong>Shared-hosting replacement enabled.</strong> Transfers retain original tables and selected files for recovery. WordPress is paused while applying the update. Concurrent edits are not merged; detected later edits can prevent automatic rollback.</p></section>';return;}
         if(self::ready($private,$root)){echo '<p><strong>Destination setup confirmed.</strong> The current URL and request-fence code match the private readiness receipt. Keep external SQL writers disabled during imports.</p></section>';return;}
-        echo '<h3>Shared-hosting migration</h3><p>Transfer in chunks, prepare replacement tables, and keep the originals for recovery. This mode does not inspect or restart shared PHP workers. WordPress requests that reach this site’s protection are paused during application and recovery; earlier requests and external writers are not guaranteed to be stopped.</p><form method="post">';wp_nonce_field('zoer_import_setup_shared');
+        echo '<h3>Shared-hosting migration</h3><p>Transfer in chunks, prepare replacement tables, and keep the originals for recovery. This mode does not inspect or restart shared PHP workers. WordPress requests that reach this site’s protection are paused during application and recovery; earlier requests and external writers are not guaranteed to be stopped. Cache drop-ins may run or serve cached pages before this protection. Exclude Zoer Connect API routes from page caching and purge page caches after migration.</p><form method="post">';wp_nonce_field('zoer_import_setup_shared');
         echo '<input type="hidden" name="zoer_import_setup_action" value="shared"><p><label><input required type="checkbox" name="replacement_accepted" value="1"> Replace selected destination content. Concurrent edits are not merged and may be overwritten; avoid editing during migration.</label></p><button type="submit" class="button button-primary">Enable shared-hosting migration</button></form><h3>Advanced: verified worker isolation</h3>';
         echo '<p><strong>Step 1: Install the earliest MU request fence.</strong> Unsupported early drop-ins or an earlier MU plugin prevent installation.</p><form method="post">';wp_nonce_field('zoer_import_setup_install');
         echo '<input type="hidden" name="zoer_import_setup_action" value="install"><button type="submit" class="button">Install request fence</button></form>';

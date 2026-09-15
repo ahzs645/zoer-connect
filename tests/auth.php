@@ -66,3 +66,11 @@ foreach($exportRoutes as $label=>$permission){
  $connection=null;assert_ok($permission($legacy)->data['status']===403);$connection=$saved;
  echo "PASS export permissions, rotation, revocation, owner demotion and application-password gate: $label\n";
 }
+
+$comparePermission=$routes['/files/compare']['POST']['permission_callback'];
+[$key,$connection]=\ZoerConnect\ConnectionKey::create(1);$native->key=$key;
+$connection['push']=false;assert_ok($comparePermission($native)->data['status']===403);
+$connection['push']=true;assert_ok($comparePermission($native)===true);
+$ownerAdmin=false;assert_ok($comparePermission($native)->data['status']===401);$ownerAdmin=true;
+[$replacement,$connection]=\ZoerConnect\ConnectionKey::create(1);assert_ok($comparePermission($native)->data['status']===401);
+echo "PASS comparison requires Push permission and current administrator credential\n";
