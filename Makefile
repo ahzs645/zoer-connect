@@ -21,6 +21,7 @@ test: lint
 	php tests/chunked-failures.php
 	php tests/peer-import.php
 	php tests/snapshot-stream.php
+	php tests/github-updater.php
 	php tests/write-fence.php
 	php tests/cache-compatibility.php
 	php -d disable_functions=link tests/cache-compatibility.php

@@ -24,5 +24,9 @@ try {
  $valid=$prefix."INSERT INTO `wp_posts` (`ID`,`content`) VALUES (X'31',NULL);\nSET FOREIGN_KEY_CHECKS=1;\n";
  foreach([substr($valid,0,-3),$valid.'unexpected',str_replace("X'31'","1",$valid),str_replace('`ID`,`content`','`ID`,`ID`',$valid),str_replace('longtext','text',$valid)] as $bad){file_put_contents($path,$bad);rejects(fn()=>SnapshotStream::read($path,$schema,SnapshotStream::initial()));}
  file_put_contents($path,$valid);$r=SnapshotStream::read($path,$schema,SnapshotStream::initial());check($r['records'][1]['row']['content']===null,'NULL lost.');
- echo "PASS streaming >8 MiB / 25,001 rows; durable cursor retry; schema, statement, footer and duplicate-column rejection\n";
+ $integerWidth10="CREATE TABLE `wp_terms` (`term_group` bigint(10) NOT NULL DEFAULT 0) ENGINE=InnoDB";
+ $integerWidth20="CREATE TABLE `wp_terms` (`term_group` bigint(20) NOT NULL DEFAULT 0) ENGINE=InnoDB";
+ check(SnapshotStream::schema($integerWidth10,'wp_terms')===SnapshotStream::schema($integerWidth20,'wp_terms'),'Equivalent integer display widths differ.');
+ check(SnapshotStream::schema($integerWidth10,'wp_terms')!==SnapshotStream::schema(str_replace('bigint(20)','int(20)',$integerWidth20),'wp_terms'),'Different integer types matched.');
+ echo "PASS streaming >8 MiB / 25,001 rows; durable cursor retry; integer display widths; schema, statement, footer and duplicate-column rejection\n";
 }finally{unlink($path);}

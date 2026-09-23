@@ -12,7 +12,9 @@ final class SnapshotStream {
     public static function schema(string $sql, string $table): string {
         $prefix='CREATE TABLE `'.$table.'` ';
         if (!str_starts_with($sql,$prefix)) throw new \InvalidArgumentException('Unexpected schema header.');
-        return preg_replace('/ AUTO_INCREMENT=[0-9]+(?= |$)/','',substr($sql,strlen($prefix)));
+        $body=preg_replace('/ AUTO_INCREMENT=[0-9]+(?= |$)/','',substr($sql,strlen($prefix)));
+        // MySQL/MariaDB integer display widths do not change stored values.
+        return preg_replace('/\b(bigint|mediumint|smallint|tinyint|int)\([0-9]+\)/i','$1',$body);
     }
     private static function line($h): string {
         $line=fgets($h,self::MAX_RECORD_BYTES+2);
