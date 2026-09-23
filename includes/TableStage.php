@@ -1,5 +1,6 @@
 <?php
 namespace ZoerConnect;
+require_once __DIR__.'/RewriteRefresh.php';
 
 /** Row staging for an explicitly selected existing InnoDB table.
  * Step methods require the caller to fence writers across requests. Synchronous
@@ -27,7 +28,7 @@ final class TableStage {
      * guarded. Post metadata is independently verified by the global preflight.
      */
     private function ephemeral(array $row): bool {
-        if($this->live===$this->db->options)return ($row['option_name']??null)==='cron' || str_starts_with((string)($row['option_name']??''),'_transient_') || str_starts_with((string)($row['option_name']??''),'_site_transient_');
+        if($this->live===$this->db->options)return in_array($row['option_name']??null,['cron','rewrite_rules',RewriteRefresh::OPTION],true) || str_starts_with((string)($row['option_name']??''),'_transient_') || str_starts_with((string)($row['option_name']??''),'_site_transient_');
         if($this->live!==$this->db->prefix.'posts' || ($row['post_type']??null)!=='post' || ($row['post_status']??null)!=='auto-draft' || !in_array($row['post_title']??null,['','Auto Draft'],true))return false;
         foreach(['post_content','post_excerpt','post_content_filtered','post_name','post_password','post_mime_type','to_ping','pinged'] as $field)if(($row[$field]??null)!=='')return false;
         foreach(['post_parent','menu_order','comment_count'] as $field)if(!in_array($row[$field]??null,[0,'0'],true))return false;
@@ -198,6 +199,7 @@ final class TableStage {
                 // lost response cannot apply it twice (auto-increment IDs matter).
                 $this->q('START TRANSACTION');
                 try{
+                    require_once __DIR__.'/RewriteRefresh.php';
                     require_once __DIR__.'/SettingsPreservation.php';
                     SettingsPreservation::apply($this->db,$this->stage);
                     $this->q("UPDATE `{$this->ledger}` SET phase='preserved' WHERE sequence_id=-1");

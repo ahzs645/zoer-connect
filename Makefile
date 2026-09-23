@@ -22,6 +22,7 @@ test: lint
 	php tests/peer-import.php
 	php tests/snapshot-stream.php
 	php tests/github-updater.php
+	php tests/rewrite-refresh.php
 	php tests/write-fence.php
 	php tests/cache-compatibility.php
 	php -d disable_functions=link tests/cache-compatibility.php

@@ -10,6 +10,13 @@ final class ExportProfile {
         $patterns=$input['excludes']??[];
         if(!is_array($patterns)||!array_is_list($patterns)||count($patterns)>100)throw new \InvalidArgumentException('Invalid exclusions.');
         foreach($patterns as $p)Selection::excluded('validation/file.txt',[$p]);
-        $out['excludes']=$patterns;return $out;
+        // Finder metadata and repository control files are not WordPress site
+        // content, and Zoer cannot import these paths. Keep caller exclusions
+        // last so an explicit negation still has its documented meaning.
+        $out['excludes']=array_values(array_unique([
+            '**/.DS_Store','**/__MACOSX/','**/._*',
+            '**/.editorconfig','**/.gitattributes','**/.gitignore','**/.gitkeep','**/.npmignore',
+            ...$patterns,
+        ]));return $out;
     }
 }

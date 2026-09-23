@@ -1,6 +1,6 @@
 <?php
 namespace ZoerConnect;
-foreach(['StageStore','FileComparison','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
+foreach(['StageStore','FileComparison','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement','RewriteRefresh'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
 
 /** Authenticated callers supply the current native credential generation. All
  * mutable job inputs are private and bound to that generation and destination.
@@ -120,7 +120,7 @@ final class TransferImport {
     public function step(string $id): array {
         return $this->locked(function()use($id){
             $s=$this->read($id);
-            if(in_array($s['phase'],['finishing','rollback_refusal_release'],true)){$this->reopen($s);$s['phase']='complete';$this->save($s);}
+            if(in_array($s['phase'],['finishing','rollback_refusal_release'],true)){RewriteRefresh::queue($this->db,$s);$this->reopen($s);$s['phase']='complete';$this->save($s);}
             if(in_array($s['phase'],['complete','rolled_back','cancelled','verification_required','paused'],true))return $this->summary($s);
             if($s['phase']==='reusing_artifacts'){
                 $previous=$this->read($s['reuseImportId']);
@@ -290,7 +290,7 @@ final class TransferImport {
                 }
                 throw $e;
             }
-            if($s['phase']==='rollback_ready'){$this->reopen($s);$s['phase']='rolled_back';$this->save($s);}
+            if($s['phase']==='rollback_ready'){RewriteRefresh::queue($this->db,$s);$this->reopen($s);$s['phase']='rolled_back';$this->save($s);}
             return $this->summary($s);
         });
     }
@@ -301,6 +301,6 @@ final class TransferImport {
         return $this->locked(function()use($id){$s=$this->read($id);if($s['phase']==='paused'){$s['phase']=$s['resumePhase'];unset($s['resumePhase']);$this->save($s);}return $this->summary($s);});
     }
     public function finish(string $id): array {
-        return $this->locked(function()use($id){$s=$this->read($id);if($s['phase']==='complete')return $this->summary($s);if(!in_array($s['phase'],['verification_required','finishing'],true))throw new \RuntimeException('Import is not ready for final verification.');if($s['phase']==='verification_required'){$this->fence->exclusive($id,$s['binding'],fn()=>$this->destination());$s['phase']='finishing';$this->save($s);}$this->reopen($s);$s['phase']='complete';$this->save($s);return $this->summary($s);});
+        return $this->locked(function()use($id){$s=$this->read($id);if($s['phase']==='complete')return $this->summary($s);if(!in_array($s['phase'],['verification_required','finishing'],true))throw new \RuntimeException('Import is not ready for final verification.');if($s['phase']==='verification_required'){$this->fence->exclusive($id,$s['binding'],fn()=>$this->destination());$s['phase']='finishing';$this->save($s);}RewriteRefresh::queue($this->db,$s);$this->reopen($s);$s['phase']='complete';$this->save($s);return $this->summary($s);});
     }
 }

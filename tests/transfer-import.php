@@ -8,7 +8,7 @@ function check($ok,$message){if(!$ok)throw new RuntimeException($message);}
 function rejects($fn){try{$fn();}catch(Throwable $e){return;}throw new RuntimeException('Unsafe import operation accepted.');}
 $base=sys_get_temp_dir().'/zoer-transfer-'.bin2hex(random_bytes(8));mkdir($base,0700);mkdir($base.'/private',0700);mkdir($base.'/public/wp-content/themes/fixture',0755,true);
 $target='https://zoer-connect-transfer-peer.wp.k8s.ahmad.sh';$owner=hash('sha256','owner generation');
-$db=new class($target){public $prefix='wp_';public $options='wp_options';public $last_error='';public $url;public function __construct($url){$this->url=$url;}public function prepare($sql,...$args){return $sql;}public function get_var($sql){return $this->url;}};
+$db=new class($target){public $prefix='wp_';public $options='wp_options';public $last_error='';public $url;public array $savedOptions=[];public function __construct($url){$this->url=$url;}public function prepare($sql,...$args){return $sql;}public function get_var($sql){return $this->url;}public function replace($table,$row){$this->savedOptions[$row['option_name']]=$row['option_value'];return 1;}};
 $new=fn($key=null)=>new TransferImport($db,$base.'/public',$base.'/private',$key??$owner,$target,true);
 try{
  rejects(fn()=>new TransferImport($db,$base.'/public',$base.'/private',$owner,$target));
