@@ -107,7 +107,7 @@ final class Plugin {
         $caps=$wpdb->get_var($wpdb->prepare("SELECT meta_value FROM `{$wpdb->usermeta}` WHERE user_id=%d AND meta_key=%s",$owner,$wpdb->prefix.'capabilities'));
         $caps=is_string($caps)?@unserialize($caps,['allowed_classes'=>false]):null;
         if(!is_array($caps)||($caps['administrator']??false)!==true||!$wpdb->get_var($wpdb->prepare("SELECT ID FROM `{$wpdb->users}` WHERE ID=%d",$owner)))return $fail(401,'The connection owner must remain an administrator.');
-        if(!preg_match('~^/zoer-connect/v1/imports(?:/([a-f0-9]{32})(?:/(chunks|step|rollback|finish|pause|resume|approve|cleanup))?)?$~D',$route,$m))return $fail(404,'Unknown import operation.');
+        if(!preg_match('~^/zoer-connect/v1/imports(?:/([a-f0-9]{32})(?:/(chunks|batch|step|rollback|finish|pause|resume|approve|cleanup))?)?$~D',$route,$m))return $fail(404,'Unknown import operation.');
         $import=null;$id=$m[1]??null;
         try {
             self::store();
@@ -116,8 +116,9 @@ final class Plugin {
             $import=new TransferImport($wpdb,ABSPATH,$root,$record['hash'],$target,true);
             $method=$_SERVER['REQUEST_METHOD']??'GET';$action=$m[2]??null;
             if($method==='GET'&&!$id)return $import->list();
-            if($method==='GET'&&$id&&!$action)return $import->status($id);
+            if($method==='GET'&&$id&&!$action)return ($_GET['view']??null)==='upload'?$import->upload($id):$import->status($id);
             if($method!=='POST')return $fail(405,'Unsupported import method.');
+            if($action==='batch')return self::batchRequest($import,$id);
             $raw=file_get_contents('php://input',false,null,0,2097153);
             if(strlen($raw)>2097152)return $fail(413,'Import request exceeds 2 MiB.');
             $body=$raw===''?[]:json_decode($raw,true,512,JSON_THROW_ON_ERROR);
@@ -134,6 +135,44 @@ final class Plugin {
             // Safe text only: our own exception messages with paths stripped.
             http_response_code($e instanceof \InvalidArgumentException?400:409);
             return TransferImport::safeError($e,$import&&$id?$import->phase($id):null);
+        }
+    }
+    /** POST /imports/{id}/batch. Octet-stream and multipart bodies are streamed from
+     * php://input or the uploaded part in bounded pieces, never read whole; the JSON
+     * transport keeps the 2 MiB limit. Oversized bodies answer 413 with the limits. */
+    private static function batchRequest(TransferImport $import,string $id): array {
+        $started=microtime(true);
+        $type=strtolower(trim(explode(';',(string)($_SERVER['CONTENT_TYPE']??''))[0]));
+        $declared=preg_match('/^\d{1,15}$/D',(string)($_SERVER['CONTENT_LENGTH']??''))?(int)$_SERVER['CONTENT_LENGTH']:null;
+        $transport=$type==='application/octet-stream'?'octet-stream':($type==='multipart/form-data'?'multipart':'json');
+        $limits=BatchUpload::limits($transport);$h=null;
+        try{
+            if($transport==='multipart'){
+                $f=$_FILES['batch']??null;
+                if(is_array($f)&&in_array($f['error']??null,[UPLOAD_ERR_INI_SIZE,UPLOAD_ERR_FORM_SIZE],true))throw new BatchBodyLimit('The batch exceeds upload_max_filesize.');
+                if(!is_array($f)){if(($declared??0)>0&&!$_POST&&!$_FILES)throw new BatchBodyLimit('The request body was discarded by a PHP size limit.');throw new \InvalidArgumentException('Batch file part required.');}
+                if(($f['error']??null)!==UPLOAD_ERR_OK||!is_string($f['tmp_name']??null)||!is_uploaded_file($f['tmp_name']))throw new \InvalidArgumentException('Invalid batch file part.');
+                $h=fopen($f['tmp_name'],'rb');if(!$h)throw new \RuntimeException('Cannot read batch file part.');
+                $body=BatchUpload::framed($h,(int)filesize($f['tmp_name']),$limits['maxBatchBytes']);
+            }elseif($transport==='octet-stream'){
+                if($declared===null)throw new \InvalidArgumentException('Content-Length required.');
+                $h=fopen('php://input','rb');if(!$h)throw new \RuntimeException('Cannot read batch body.');
+                $body=BatchUpload::framed($h,$declared,$limits['maxBatchBytes']);
+            }else{
+                $raw=(string)file_get_contents('php://input',false,null,0,BatchUpload::JSON_BYTES+1);
+                if(strlen($raw)>BatchUpload::JSON_BYTES||($raw===''&&($declared??0)>0))throw new BatchBodyLimit('JSON batch exceeds 2 MiB or was discarded by a PHP size limit.');
+                try{$json=json_decode($raw,true,8,JSON_THROW_ON_ERROR);}catch(\JsonException $e){throw new \InvalidArgumentException('JSON batch required.');}
+                if(!is_array($json))throw new \InvalidArgumentException('JSON batch required.');
+                $body=BatchUpload::json($json);unset($raw,$json);
+            }
+            return $import->batch($id,$body,$started)+['limits'=>$limits];
+        }catch(BatchBodyLimit $e){http_response_code(413);return ['code'=>'zoer_import_body_limit','message'=>$e->getMessage(),'limits'=>$limits];}
+        finally{
+            // Consume an unread octet-stream tail (rejection, deadline, refused size) before
+            // answering, so proxies deliver the response instead of resetting a client that
+            // is still sending. Bounded; the bytes are discarded in 256 KiB pieces.
+            if($h&&$transport==='octet-stream'&&$declared<=2*($limits['maxBatchBytes']+8+BatchUpload::MAX_HEADER))while(!feof($h)&&is_string($piece=fread($h,StageStore::CHUNK))&&$piece!=='');
+            if($h)fclose($h);
         }
     }
     public static function routes(): void {
@@ -167,20 +206,23 @@ final class Plugin {
                 },
             ]);
         };
-        foreach(['/imports','/imports/(?P<id>[a-f0-9]{32})','/imports/(?P<id>[a-f0-9]{32})/(?P<action>chunks|step|rollback|finish|pause|resume|approve|cleanup)'] as $path) {
+        foreach(['/imports','/imports/(?P<id>[a-f0-9]{32})','/imports/(?P<id>[a-f0-9]{32})/(?P<action>chunks|batch|step|rollback|finish|pause|resume|approve|cleanup)'] as $path) {
             register_rest_route('zoer-connect/v1',$path,['methods'=>'GET,POST','permission_callback'=>'__return_true','callback'=>static function($r){
                 $result=self::earlyImportRecovery($r->get_route());$status=http_response_code();return new \WP_REST_Response($result,$status>=400?$status:200,['Cache-Control'=>'no-store']);
             }]);
         }
         $register('/status', 'GET', static function () {
+            require_once __DIR__.'/BatchUpload.php';
             $storage=self::storageStatus(); $ready=$storage['ready'];
             $record=get_option(ConnectionKey::OPTION,null);
             $private=self::storageRoot();
             $importReady=ImportAdmin::ready($private,ABSPATH);
             $capabilities=['pagedExport'=>true,'connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'selectivePush'=>true,'artifactReuse'=>function_exists('link'), 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady];
             // API version 2 (0.4.0). Import-side flags describe the protocol implemented by this version.
+            // Batched upload (C1): 256 KiB blocks packed per request; see BatchUpload.
+            $capabilities['batchUpload']=true;$capabilities['batchDeflate']=function_exists('inflate_init');
             foreach(['replacementRules','replacementVariants','reviewPause','createTables','authorMapping','keepActivePlugins','lateFence','importPauseResume','importCleanup','importList','siteReplace','cachePurge','databaseFilters','resourceModes','mediaSince','diagnostics','safeErrors'] as $capability)$capabilities[$capability]=true;
-            return ['version' => '0.4.0', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK];
+            return ['version' => '0.4.0', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'batchLimits'=>BatchUpload::limits()];
         });
         $register('/diagnostics', 'GET', static function(){global $wpdb;return Diagnostics::collect($wpdb);});
         $register('/exports/paged', 'POST', static function($r){global $wpdb,$wp_version;$b=$r->get_json_params();if(!is_array($b))throw new \InvalidArgumentException('JSON selections required.');return self::exports(true)->create($b,['url'=>untrailingslashit(home_url()),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version,'abspath'=>untrailingslashit(ABSPATH)],self::activeResources());});

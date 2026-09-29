@@ -13,7 +13,7 @@ they keep working while the request fence pauses WordPress.
 
 Prints PASS/FAIL lines and exits non-zero if any check fails.
 """
-import base64, hashlib, http.client, json, os, re, socket, ssl, subprocess, sys, time, traceback, uuid, urllib.parse
+import base64, hashlib, http.client, json, os, re, socket, ssl, struct, subprocess, sys, time, traceback, uuid, urllib.parse, zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(HERE, '.state')
@@ -256,9 +256,12 @@ def transfer_manifest(view, files, data, options=None, file_blocks=True, source_
         body['options'] = options
     return body, blobs
 
+REQUESTS = {'chunks': 0, 'batch': 0}
+
 def upload(import_id, blobs):
     for index, blob in enumerate(blobs):
         for offset in range(0, len(blob), CHUNK):
+            REQUESTS['chunks'] += 1
             status, s = api('dest', '/imports/%s/chunks' % import_id, 'POST', {'index': index, 'offset': offset, 'data': base64.b64encode(blob[offset:offset + CHUNK]).decode()})
             if status != 200:
                 raise Abort('chunk upload %d@%d: %s %s' % (index, offset, status, s))
@@ -465,8 +468,10 @@ def scenario_3():
         if phase in ('checking_artifacts', 'scanning_database', 'mapping_authors', 'preparing_tables', 'reading_database', 'verifying_tables', 'review_required'):
             code = page('dest')[0]
             live.append((phase, code, fence_active()))
+    CTX['s3chunks'] = REQUESTS['chunks']
     status, s, seen = drive(iid, 'step', {'review_required', 'cancelled', 'complete'}, watch)
     require('steps reach review_required', status == 200 and s['phase'] == 'review_required', (status, s, seen))
+    CTX['s3review'] = s
     order = ['checking_artifacts', 'scanning_database', 'mapping_authors', 'preparing_tables', 'reading_database', 'verifying_tables', 'review_required']
     check('phase order with activation fence + match', [p for p in seen if p in order] == order, seen)
     check('destination serves 200 and holds no fence during staging and review', live and all(code == 200 and not fenced for _, code, fenced in live), live)
@@ -494,6 +499,8 @@ def scenario_3():
     status, s = call(iid, 'finish')
     require('finish -> complete', status == 200 and s['phase'] == 'complete' and s['finishedAt'], (status, s))
     CTX['published'] = table_rows('dest')
+    CTX['s3hashes'] = table_hashes('dest')
+    CTX['s3summary'] = s
     check('finish retry is idempotent', call(iid, 'finish')[1]['phase'] == 'complete')
     check('site reopened: GET / 200 and fence file gone', page('dest')[0] == 200 and not fence_active())
     verify_push()
@@ -778,6 +785,171 @@ def scenario_8():
     check('rollback before activation cancels', status == 200 and s['phase'] == 'cancelled', (status, s))
     assert_cleanup('scenario 8', iid, s)
 
+# --- batched upload client (C1) ------------------------------------------------------
+def zbt1(spans, payloads, enc=None):
+    header = json.dumps({'v': 1, 'spans': spans, 'payloadBytes': sum(map(len, payloads)), 'enc': enc}, separators=(',', ':')).encode()
+    return b'ZBT1' + struct.pack('>I', len(header)) + header + b''.join(payloads)
+
+def multipart(frame):
+    boundary = uuid.uuid4().hex
+    body = (b'--' + boundary.encode() + b'\r\nContent-Disposition: form-data; name="batch"; filename="batch.bin"\r\nContent-Type: application/octet-stream\r\n\r\n'
+            + frame + b'\r\n--' + boundary.encode() + b'--\r\n')
+    return 'multipart/form-data; boundary=' + boundary, body
+
+def post_batch(iid, content_type, data):
+    REQUESTS['batch'] += 1
+    try:
+        status, _, raw = fetch('dest', '/wp-json/zoer-connect/v1/imports/%s/batch' % iid, 'POST', raw=data, headers={'X-Zoer-Connection': KEYS['dest'], 'Content-Type': content_type})
+    except (OSError, http.client.HTTPException) as e:
+        return None, {'_error': repr(e)}
+    try:
+        return status, json.loads(raw)
+    except ValueError:
+        return status, {'_raw': raw[:300].decode('utf-8', 'replace')}
+
+def ini_bytes(v):
+    m = re.match(r'\s*(\d+)\s*([kmg]?)', str(v or ''), re.I)
+    return int(m.group(1)) * {'': 1, 'k': 1024, 'm': 1 << 20, 'g': 1 << 30}[m.group(2).lower()] if m else 0
+
+def pack(blobs, cursor, budget, only=None):
+    """Spans forward from the server cursor: whole blocks, <= budget raw bytes, <= 1024 spans; zero-byte artifacts have none."""
+    spans, payloads, total = [], [], 0
+    i, off = cursor['index'], cursor['offset']
+    while i < len(blobs) and len(spans) < 1024 and (only is None or i in only):
+        blob = blobs[i]
+        if off >= len(blob):
+            i, off = i + 1, 0
+            continue
+        length = len(blob) - off
+        if length > budget - total:
+            length = (budget - total) // CHUNK * CHUNK
+            if not length:
+                break
+        spans.append([i, off, length]); payloads.append(blob[off:off + length]); total += length; off += length
+    return spans, payloads
+
+def scenario_9():
+    print('\n== Scenario 9: batched Push (/batch: octet-stream + deflate, JSON, multipart) matches the /chunks Push', flush=True)
+    status, st = api('dest', '/status')
+    limits = st.get('batchLimits') or {}
+    check('/status: batchUpload, batchDeflate, transports and limits advertised', st['capabilities'].get('batchUpload') is True and st['capabilities'].get('batchDeflate') is True
+          and st.get('batchTransports') == ['octet-stream', 'multipart', 'json'] and limits.get('blockBytes') == CHUNK and limits.get('maxSpans') == 1024 and limits.get('deadlineMs') == 2000
+          and limits.get('maxJsonBatchBytes') == 2097152 and CHUNK <= limits.get('maxBatchBytes', 0) <= 8388608, (st.get('batchTransports'), limits))
+    view, files, data = CTX['pull']
+    options = {'replacements': {'automatic': True, 'variants': True, 'paths': True, 'custom': [{'find': 'Source Brand', 'replace': 'Dest Brand', 'regex': False, 'caseSensitive': False}]},
+               'authorMapping': 'match', 'createTables': True, 'fence': 'activation', 'review': True, 'purgeCaches': True}
+    body, blobs = transfer_manifest(view, files, data, options)
+    iid = body['id']
+    status, s = api('dest', '/imports', 'POST', body)
+    require('create import for the batched push', status == 200 and s['phase'] == 'uploading', (status, s))
+    listing = set(dc('exec', '-T', 'dest', 'ls', '-A', SITES['dest']['private'] + '/import-' + iid).stdout.split())
+    check('index files written at create (artifacts.idx, blocks.idx, upload.json)', {'artifacts.idx', 'blocks.idx', 'upload.json', 'state.json'} <= listing, listing)
+    status, u = api('dest', '/imports/' + iid, params={'view': 'upload'})
+    total = sum(map(len, blobs))
+    check('view=upload at start: cursor 0/0, totals', status == 200 and u == {'cursor': {'index': 0, 'offset': 0}, 'uploadedBytes': 0, 'totalBytes': total, 'phase': 'uploading'}, (status, u))
+    start = REQUESTS['batch']
+    counts = {'octet-stream': 0, 'deflate': 0, 'json': 0, 'json-deflate': 0, 'multipart': 0}
+    shape = ['v', 'phase', 'acceptedSpans', 'appendedBytes', 'cursor', 'uploadedBytes', 'totalBytes', 'complete', 'deadlineHit', 'serverMs', 'rejected', 'limits']
+
+    def send(kind, spans, payloads):
+        if kind == 'deflate':
+            z = [zlib.compress(p) for p in payloads]
+            frame = zbt1([sp + [len(zz)] for sp, zz in zip(spans, z)], z, 'deflate')
+            status, r = post_batch(iid, 'application/octet-stream', frame)
+        elif kind == 'json-deflate':
+            z = [zlib.compress(p) for p in payloads]
+            status, r = post_batch(iid, 'application/json', json.dumps({'v': 1, 'enc': 'deflate', 'spans': [sp + [len(zz), base64.b64encode(zz).decode()] for sp, zz in zip(spans, z)]}).encode())
+        elif kind == 'json':
+            status, r = post_batch(iid, 'application/json', json.dumps({'v': 1, 'spans': [sp + [base64.b64encode(p).decode()] for sp, p in zip(spans, payloads)]}).encode())
+        elif kind == 'multipart':
+            status, r = post_batch(iid, *multipart(zbt1(spans, payloads)))
+        else:
+            status, r = post_batch(iid, 'application/octet-stream', zbt1(spans, payloads))
+        counts[kind] += 1
+        return status, r
+
+    # 1. database.sql as zlib (RFC 1950) deflate spans, 2. JSON (<= 1 MiB raw), 3. JSON with deflate,
+    # 4. multipart (<= 1 MiB raw), then fixed 4 MiB octet-stream batches, each packed from the server cursor.
+    cursor, first, last = {'index': 0, 'offset': 0}, {}, None
+    plan = [('deflate', 4 << 20, {0}), ('json', 1 << 20, None), ('json-deflate', 1 << 20, None), ('multipart', 1 << 20, None)]
+    for _ in range(400):
+        kind, budget, only = plan.pop(0) if plan else ('octet-stream', 4 << 20, None)
+        spans, payloads = pack(blobs, cursor, budget, only)
+        if not spans:
+            break
+        status, r = send(kind, spans, payloads)
+        if status != 200 or r.get('rejected') is not None or r.get('acceptedSpans') is None:
+            check('batch (%s) accepted' % kind, False, (status, r))
+            raise Abort('batch upload failed')
+        first.setdefault(kind, (spans, payloads, r))
+        last = (spans, payloads, r)
+        cursor = r['cursor']
+        if r['complete']:
+            break
+    rs = {k: v[2] for k, v in first.items()}
+    check('every transport accepted its batch in full (octet-stream, deflate, json, json-deflate, multipart)', set(rs) == set(counts)
+          and all(r['acceptedSpans'] == len(first[k][0]) and not r['deadlineHit'] and r['appendedBytes'] == sum(map(len, first[k][1])) for k, r in rs.items()), {k: (r['acceptedSpans'], r['deadlineHit'], r['serverMs']) for k, r in rs.items()})
+    check('batch response has exactly the C1 keys and limits', all(list(r) == shape for r in rs.values()) and rs['octet-stream']['limits'] == limits, list(rs['octet-stream']))
+    r = last[2]
+    check('last batch: complete, cursor at end, uploadedBytes == totalBytes', r['complete'] and r['cursor'] == {'index': len(blobs), 'offset': 0} and r['uploadedBytes'] == r['totalBytes'] == total, r)
+    status, u = api('dest', '/imports/' + iid, params={'view': 'upload'})
+    check('view=upload after the batches agrees', u == {'cursor': {'index': len(blobs), 'offset': 0}, 'uploadedBytes': total, 'totalBytes': total, 'phase': 'uploading'}, u)
+    status, again = send('octet-stream', last[0], last[1])
+    check('retry of the last batch is idempotent (appendedBytes 0, all spans accepted)', status == 200 and again['appendedBytes'] == 0 and again['acceptedSpans'] == len(last[0]) and again['rejected'] is None, (status, again))
+    batch_requests = REQUESTS['batch'] - start
+    # Body limits: a multipart part over upload_max_filesize that PHP still reads (UPLOAD_ERR_INI_SIZE),
+    # and an octet-stream body over post_max_size and maxBatchBytes, refused from its declared length
+    # (the plugin drains the bounded tail, so the 413 arrives instead of a connection reset).
+    php = api('dest', '/diagnostics')[1]['php']
+    post_max, upload_max = ini_bytes(php['postMaxSize']), ini_bytes(php['uploadMaxFilesize'])
+    if 0 < upload_max and upload_max + (1 << 20) < post_max:
+        pad = upload_max + (256 << 10)
+        status, e = post_batch(iid, *multipart(zbt1([[0, 0, pad]], [b'\0' * pad])))
+        check('multipart part over upload_max_filesize (%s) -> 413 zoer_import_body_limit with limits' % php['uploadMaxFilesize'], status == 413 and e.get('code') == 'zoer_import_body_limit' and e.get('limits', {}).get('blockBytes') == CHUNK, (status, e))
+    else:
+        print('INFO multipart body-limit check skipped (upload_max_filesize %s, post_max_size %s)' % (php['uploadMaxFilesize'], php['postMaxSize']), flush=True)
+    over = max(post_max, limits['maxBatchBytes']) + CHUNK
+    status, e = post_batch(iid, 'application/octet-stream', zbt1([[0, 0, over]], [b'\0' * over]))
+    check('octet-stream body over post_max_size/maxBatchBytes -> 413 zoer_import_body_limit with limits', status == 413 and e.get('code') == 'zoer_import_body_limit' and e.get('limits') == limits, (status, e))
+    frame = bytearray(zbt1(last[0][:1], last[1][:1])); frame[-1] ^= 1
+    status, e = post_batch(iid, 'application/octet-stream', bytes(frame))
+    check('corrupted block -> 200 with rejected digest_mismatch (nothing changed)', status == 200 and (e.get('rejected') or {}).get('code') == 'digest_mismatch' and e.get('appendedBytes') == 0, (status, e))
+    status, e = post_batch(iid, 'application/octet-stream', b'ZBT1' + struct.pack('>I', 70000) + b' ' * 70000)
+    check('header over 64 KiB -> 400 safe error', status == 400 and e.get('code') == 'zoer_import_failed' and '64 KiB' in e.get('message', ''), (status, e))
+    status, e = api('dest', '/imports/%s/batch' % iid, 'POST', {'v': 1, 'spans': 'nope'})
+    check('malformed JSON batch -> 400 safe error', status == 400 and e.get('code') == 'zoer_import_failed', (status, e))
+
+    chunks = CTX.get('s3chunks') or sum((len(b) + CHUNK - 1) // CHUNK for b in blobs)
+    print('INFO request counts for the same export (%d artifacts, %d bytes): /chunks %d vs /batch %d (octet-stream %d, deflate %d, json %d, json-deflate %d, multipart %d; plus 1 idempotent retry)'
+          % (len(blobs), total, chunks, batch_requests - 1, counts['octet-stream'] - 1, counts['deflate'], counts['json'], counts['json-deflate'], counts['multipart']), flush=True)
+    check('/batch needs far fewer upload requests than /chunks', batch_requests - 1 < chunks, (batch_requests - 1, chunks))
+
+    status, s, seen = drive(iid, 'step', {'review_required', 'cancelled', 'complete'})
+    require('batched push reaches review_required', status == 200 and s['phase'] == 'review_required', (status, s, seen))
+    status, e = post_batch(iid, 'application/octet-stream', zbt1(last[0][:1], last[1][:1]))
+    check('batch outside uploading -> 409 safe error with phase', status == 409 and e.get('code') == 'zoer_import_failed' and e.get('phase') == 'review_required', (status, e))
+    ref = CTX.get('s3review')
+    if ref:
+        strip = lambda x: {k: x[k] for k in ('stats', 'authors', 'progress', 'tableRows')}
+        check('review summary identical to the /chunks push (stats, samples, authors, progress, rows)', strip(s) == strip(ref), [k for k in ('stats', 'authors', 'progress', 'tableRows') if s[k] != ref[k]])
+    call(iid, 'approve')
+    status, s, _ = drive(iid, 'step', {'verification_required', 'cancelled', 'complete'})
+    require('batched push reaches verification_required', status == 200 and s['phase'] == 'verification_required', (status, s))
+    status, s = call(iid, 'finish')
+    require('batched push finish -> complete', status == 200 and s['phase'] == 'complete', (status, s))
+    now = table_hashes('dest')
+    if CTX.get('s3hashes'):
+        diff = [t for t in set(now) | set(CTX['s3hashes']) if now.get(t) != CTX['s3hashes'].get(t)]
+        check('published destination tables identical to the /chunks push', not diff, diff)
+    media = next(f for f in files if f['path'].endswith('/zc-media.png'))
+    check('published files match source digests', file_sha('dest', '/var/www/html/' + media['path']) == media['sha256'] and exists('dest', '/var/www/html/wp-content/themes/zc-child/style.css'))
+    status, s, _ = drive(iid, 'rollback', {'rolled_back', 'cancelled'})
+    check('batched push rollback -> rolled_back', status == 200 and s['phase'] == 'rolled_back', (status, s))
+    now = table_hashes('dest')
+    check('rollback restores every table', now == CTX['baseline'], [t for t in now if now[t] != CTX['baseline'].get(t)])
+    check('rollback removes created directories', not content_dirs() - CTX['dirs'], sorted(content_dirs() - CTX['dirs']))
+    assert_cleanup('scenario 9', iid, s)
+
 def final_checks():
     print('\n== Final state', flush=True)
     now = table_hashes('dest')
@@ -793,7 +965,7 @@ def final_checks():
     check('source untouched by pulls (still serves, still has revisions)', page('source', '/hello-source/')[0] == 200 and int(var('source', "SELECT COUNT(*) FROM wp_posts WHERE post_type='revision'")) >= 2)
 
 def main():
-    plan = [('1', scenario_1), ('2', scenario_2), ('baseline', baseline), ('3', scenario_3), ('4', scenario_4), ('5', scenario_5), ('6', scenario_6), ('7', scenario_7), ('8', scenario_8), ('final', final_checks)]
+    plan = [('1', scenario_1), ('2', scenario_2), ('baseline', baseline), ('3', scenario_3), ('4', scenario_4), ('5', scenario_5), ('6', scenario_6), ('7', scenario_7), ('8', scenario_8), ('9', scenario_9), ('final', final_checks)]
     only = set(sys.argv[1:])
     for name, fn in plan:
         if only and name not in only and name != 'baseline':

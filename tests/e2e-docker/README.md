@@ -6,7 +6,7 @@ Drives the Zoer Connect 0.4.0 protocol (API version 2) between two disposable Wo
 ./run.sh                         # fresh fixture -> all scenarios -> teardown (exit 0 = all PASS)
 DB_IMAGE=mysql:8.0 ./run.sh      # same against MySQL 8.0
 KEEP=1 ./run.sh                  # keep containers for inspection; ./teardown.sh later
-./setup.sh && python3 driver.py 1 2   # run selected scenarios (3-8 depend on 2)
+./setup.sh && python3 driver.py 1 2   # run selected scenarios (3-9 depend on 2)
 ```
 
 Requirements: Docker (Compose v2), `python3` (standard library only), `openssl`, `curl`. Port `127.0.0.1:8443` (override with `ZC_HTTPS_PORT`).
@@ -42,6 +42,7 @@ SQL probes (`php/sql.php`) use WordPress `SHORTINIT` via `docker compose exec`, 
 6. `kind:'replace'` with literal and case-insensitive regex rules, review, approve, finish, rollback; a no-review options-only replace, cleanup, rollback refused after cleanup, reverse replace.
 7. Late-fence abort: a live row edited during `review_required` makes the approved import end `cancelled` with a safe error; the site is live (200) and `write-fence.json` is absent.
 8. Pause/resume (while uploading and mid-pipeline), `GET /imports`, idempotent/conflicting create, and safe error shapes (`{code:'zoer_import_failed', message, phase}`) for bad options, bad chunks, unknown ids and actions.
+9. Batched Push (`POST /imports/{id}/batch`) of the scenario 3 export with the same options: `/status` batch capabilities/limits; index files at create; `view=upload` cursor; `database.sql` as one zlib-deflated octet-stream batch, one JSON-transport batch, one deflated JSON batch and one multipart batch (1 MiB each), then fixed 4 MiB `ZBT1` octet-stream batches from the server cursor; idempotent retry; 413 `zoer_import_body_limit` for an oversized multipart part and octet-stream batch; digest mismatch, oversized header, malformed JSON and wrong-phase refusals. The review summary and the published tables must equal the `/chunks` push of scenario 3; request counts for `/chunks` vs `/batch` are printed (`INFO request counts`). Then rollback and cleanup.
 
 A final check requires the destination to be byte-for-byte back at its pre-test content (ignoring caches, cron, session and Quick Draft state) with no private tables left.
 

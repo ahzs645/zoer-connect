@@ -1,6 +1,6 @@
 <?php
 namespace ZoerConnect;
-foreach(['ImportError','StageStore','FileComparison','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement','RewriteRefresh','CachePurge','DatabaseExporter'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
+foreach(['ImportError','StageStore','FileComparison','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement','RewriteRefresh','CachePurge','DatabaseExporter','BatchUpload'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
 
 /** Authenticated callers supply the current native credential generation. All
  * mutable job inputs are private and bound to that generation and destination.
@@ -183,6 +183,7 @@ final class TransferImport {
             $s+=['kind'=>$kind,'options'=>$options,'legacyReplacements'=>!isset($body['options']),'sourcePath'=>$sourcePath,'samples'=>[],'authors'=>null,'cleanedUp'=>false,'updatedAt'=>$s['createdAt'],'finishedAt'=>null];
             $s['binding']=hash('sha256',json_encode([$this->owner,$this->target,$body],JSON_THROW_ON_ERROR));
             if($reuse!==null){$s['reuseImportId']=$reuse;$s['phase']='reusing_artifacts';}
+            if(!$replace)self::writeIndexes($dir,$artifacts);
             $json=json_encode($s,JSON_THROW_ON_ERROR);if(file_put_contents($dir.'/state.json',$json)!==strlen($json)||!rename($dir,$final))throw new \RuntimeException('Cannot publish initialized import journal.');
             return $this->summary($s);
         });
@@ -224,14 +225,132 @@ final class TransferImport {
         return $this->locked(function()use($id,$index,$offset,$data){
             $s=$this->read($id);$a=$s['artifacts'][$index]??null;
             if($s['phase']!=='uploading'||!$a||$offset<0||$offset%StageStore::CHUNK!==0||strlen($data)!==min(StageStore::CHUNK,$a['bytes']-$offset)||$data==='')throw new \InvalidArgumentException('Invalid artifact chunk.');
-            if(isset($a['chunkSha256'])&&!hash_equals($a['chunkSha256'][(int)($offset/StageStore::CHUNK)]??'',hash('sha256',$data)))throw new \InvalidArgumentException('Database chunk digest mismatch.');
-            $path=$this->dir($id).'/artifact-'.$index.'/data';clearstatcache(true,$path);$size=filesize($path);
-            $h=fopen($path,'c+b');if(!$h)throw new \RuntimeException('Cannot open artifact.');
-            try{
-                if($offset<$size){fseek($h,$offset);$existing=fread($h,strlen($data));if(!hash_equals($existing,substr($data,0,strlen($existing))))throw new \InvalidArgumentException('Conflicting chunk retry.');if(strlen($existing)<strlen($data)){fseek($h,$offset);if(fwrite($h,$data)!==strlen($data)||!fflush($h))throw new \RuntimeException('Upload retry failed.');}}
-                else {if($offset!==$size)throw new \InvalidArgumentException('Upload offset mismatch.');fseek($h,$offset);if(fwrite($h,$data)!==strlen($data)||!fflush($h))throw new \RuntimeException('Upload failed.');}
-            }finally{fclose($h);}
+            try{$this->appendBlock($this->dir($id).'/artifact-'.$index.'/data',$offset,$data,isset($a['chunkSha256'])?($a['chunkSha256'][intdiv($offset,StageStore::CHUNK)]??''):null);}
+            catch(BatchRejected $r){throw new \InvalidArgumentException(['digest_mismatch'=>'Database chunk digest mismatch.','gap'=>'Upload offset mismatch.'][$r->reason]??'Conflicting chunk retry.');}
             return $this->summary($s);
+        });
+    }
+    /** Shared by /chunks and /batch, so a client may switch mid-upload. The block's
+     * SHA-256 is checked before any write; then a block inside the staged bytes is
+     * skipped (a verified block that differs on disk is rewritten), one overlapping
+     * the end is written at its offset (repairing a torn tail), and one beyond the end
+     * is a gap. Without a digest (legacy whole-file artifacts, /chunks only) staged
+     * bytes must match. Returns how many bytes the artifact grew. */
+    private function appendBlock(string $path,int $offset,string $data,?string $digest): int {
+        if($digest!==null&&!hash_equals($digest,hash('sha256',$data)))throw new BatchRejected('digest_mismatch');
+        clearstatcache(true,$path);$size=@filesize($path);if($size===false)throw new \RuntimeException('Cannot open artifact.');
+        if($offset>$size)throw new BatchRejected('gap');
+        $h=fopen($path,'c+b');if(!$h)throw new \RuntimeException('Cannot open artifact.');
+        try{
+            $n=strlen($data);
+            if($offset<$size){fseek($h,$offset);$existing=(string)fread($h,$n);if($existing===$data)return 0;if($digest===null&&!hash_equals($existing,substr($data,0,strlen($existing))))throw new BatchRejected('conflict');}
+            fseek($h,$offset);if(fwrite($h,$data)!==$n||!fflush($h))throw new \RuntimeException($offset<$size?'Upload retry failed.':'Upload failed.');
+            return max(0,$offset+$n-$size);
+        }finally{fclose($h);}
+    }
+    /** Phase and binding from the journal's leading keys (id, phase, migrationMode,
+     * target and owner are written first), so an upload request never decodes every
+     * artifact's block digests. Any other layout falls back to a full read. */
+    private function head(string $id): string {
+        $lead=@file_get_contents($this->dir($id).'/state.json',false,null,0,4096);
+        if(is_string($lead)&&preg_match('~^\{"id":"([a-f0-9]{32})","phase":"([a-z_]+)","migrationMode":"[a-z-]+","target":("(?:[^"\\\\]|\\\\.)*"),"owner":"([a-f0-9]{64})",~',$lead,$m)&&$m[1]===$id){
+            if(json_decode($m[3])!==$this->target||!hash_equals($this->owner,$m[4]))throw new \RuntimeException('Import credential generation or destination changed.');
+            return $m[2];
+        }
+        return $this->read($id)['phase'];
+    }
+    private static function atomic(string $path,string $data): void {
+        $h=fopen($path.'.tmp','wb');if(!$h)throw new \RuntimeException('Cannot persist upload index.');
+        try{$ok=fwrite($h,$data)===strlen($data)&&fflush($h);}finally{fclose($h);}
+        if(!$ok||!rename($path.'.tmp',$path))throw new \RuntimeException('Cannot persist upload index.');
+    }
+    /** Fixed-width upload indexes: artifacts.idx holds (uint64 bytes, uint32 first block,
+     * uint32 verified) per artifact, blocks.idx 32 raw SHA-256 bytes per block; upload.json
+     * (the cursor) is written last, so its presence implies complete indexes. */
+    private static function writeIndexes(string $dir,array $artifacts): void {
+        $a='';$b='';$blocks=0;
+        foreach($artifacts as $x){$verified=isset($x['chunkSha256']);$a.=pack('JNN',$x['bytes'],$verified?$blocks:0xFFFFFFFF,$verified?1:0);if($verified)foreach($x['chunkSha256'] as $hash){$b.=hex2bin($hash);$blocks++;}}
+        self::atomic($dir.'/artifacts.idx',$a);self::atomic($dir.'/blocks.idx',$b);
+        self::atomic($dir.'/upload.json',json_encode(['cursor'=>['index'=>0,'offset'=>0],'uploadedBytes'=>0,'totalBytes'=>array_sum(array_column($artifacts,'bytes')),'done'=>0,'ahead'=>[],'artifacts'=>count($artifacts),'blocks'=>$blocks],JSON_THROW_ON_ERROR));
+    }
+    /** The upload cursor and its indexes. Journals created before 0.4.0 batching get
+     * them built once from the full state, only while uploads are still possible. */
+    private function uploadIndex(string $id,bool $build=true): ?array {
+        $dir=$this->dir($id);$u=json_decode((string)@file_get_contents($dir.'/upload.json'),true);
+        clearstatcache();
+        if(is_array($u)&&is_int($u['artifacts']??null)&&is_int($u['blocks']??null)&&is_int($u['done']??null)&&is_array($u['ahead']??null)&&@filesize($dir.'/artifacts.idx')===16*$u['artifacts']&&@filesize($dir.'/blocks.idx')===32*$u['blocks'])return $u;
+        if(!$build)return null;
+        $s=$this->read($id);$phase=$s['phase']==='paused'?($s['resumePhase']??''):$s['phase'];
+        if(($s['kind']??'transfer')==='replace'||!in_array($phase,['uploading','reusing_artifacts'],true))return null;
+        self::writeIndexes($dir,$s['artifacts']);return $this->uploadIndex($id,false);
+    }
+    private static function entry($h,int $i): array {
+        fseek($h,16*$i);$raw=fread($h,16);if(!is_string($raw)||strlen($raw)!==16)throw new \RuntimeException('Cannot read upload index.');
+        return unpack('Jbytes/Nfirst/Nverified',$raw);
+    }
+    private static function resumeOffset(string $path): int {clearstatcache(true,$path);return intdiv((int)@filesize($path),StageStore::CHUNK)*StageStore::CHUNK;}
+    /** Moves the cursor past complete artifacts (staged sizes only grow) and recomputes
+     * uploadedBytes; the cursor offset is block-aligned, so a torn tail is resent. */
+    private function advanceCursor(string $id,array &$u,$h): void {
+        $dir=$this->dir($id);$i=$u['cursor']['index'];$size=0;
+        while($i<$u['artifacts']){
+            $bytes=self::entry($h,$i)['bytes'];$path=$dir.'/artifact-'.$i.'/data';clearstatcache(true,$path);$size=is_file($path)?filesize($path):$bytes;
+            if($size<$bytes)break;
+            $u['done']+=$bytes;unset($u['ahead'][$i]);$i++;$size=0;
+        }
+        unset($u['ahead'][$i]);
+        $u['cursor']=['index'=>$i,'offset'=>intdiv($size,StageStore::CHUNK)*StageStore::CHUNK];$u['uploadedBytes']=$u['done']+$size+array_sum($u['ahead']);
+    }
+    /** GET /imports/{id}?view=upload: {cursor, uploadedBytes, totalBytes, phase} without
+     * the import lock or a full journal decode. */
+    public function upload(string $id): array {
+        $phase=$this->head($id);
+        $u=$this->uploadIndex($id,false)??$this->locked(fn()=>$this->uploadIndex($id));
+        if($u===null){
+            $s=$this->read($id);$p=$this->summary($s);$cursor=['index'=>count($s['artifacts']),'offset'=>0];
+            if($s['phase']!=='snapshotting')foreach($p['offsets'] as $i=>$o)if($o<$s['artifacts'][$i]['bytes']){$cursor=['index'=>$i,'offset'=>intdiv($o,StageStore::CHUNK)*StageStore::CHUNK];break;}
+            return ['cursor'=>$s['phase']==='snapshotting'?['index'=>0,'offset'=>0]:$cursor,'uploadedBytes'=>$p['progress']['uploadedBytes'],'totalBytes'=>$p['progress']['totalBytes'],'phase'=>$s['phase']];
+        }
+        $h=fopen($this->dir($id).'/artifacts.idx','rb');if(!$h)throw new \RuntimeException('Cannot read upload index.');
+        try{$this->advanceCursor($id,$u,$h);}finally{fclose($h);}
+        return ['cursor'=>$u['cursor'],'uploadedBytes'=>$u['uploadedBytes'],'totalBytes'=>$u['totalBytes'],'phase'=>$phase];
+    }
+    /** POST /imports/{id}/batch: ordered spans of 256 KiB blocks, each authenticated by
+     * its manifest SHA-256 before it is written to private staging. Stops at the first
+     * rejected span, or between blocks once $budget seconds have passed since $started
+     * (at least one block is always attempted). Reads only the index files. */
+    public function batch(string $id,BatchUpload $body,?float $started=null,float $budget=2.0): array {
+        $started??=microtime(true);
+        return $this->locked(function()use($id,$body,$started,$budget){
+            if($this->head($id)!=='uploading')throw new \RuntimeException('Import is not accepting uploads.');
+            $u=$this->uploadIndex($id);if($u===null)throw new \RuntimeException('Import is not accepting uploads.');
+            $dir=$this->dir($id);$ah=fopen($dir.'/artifacts.idx','rb');$bh=fopen($dir.'/blocks.idx','rb');
+            $deadline=$started+$budget;$accepted=0;$appended=0;$blocks=0;$hit=false;$rejected=null;
+            try{
+                if(!$ah||!$bh)throw new \RuntimeException('Cannot read upload index.');
+                foreach($body->spanList() as $k=>[$i,$o,$len]){
+                    if($blocks>0&&microtime(true)>=$deadline){$hit=true;break;}
+                    $e=$i<$u['artifacts']?self::entry($ah,$i):null;$path=$dir.'/artifact-'.$i.'/data';
+                    try{
+                        $body->next();
+                        if(!$e)throw new BatchRejected('bounds');
+                        if(!$e['verified'])throw new BatchRejected('unverifiable');
+                        if($o%StageStore::CHUNK||$o+$len>$e['bytes']||($len%StageStore::CHUNK&&$o+$len!==$e['bytes']))throw new BatchRejected('bounds');
+                        for($off=$o;$off<$o+$len;$off+=StageStore::CHUNK){
+                            if($blocks>0&&microtime(true)>=$deadline){$hit=true;break 2;}
+                            $data=$body->read(min(StageStore::CHUNK,$o+$len-$off));
+                            fseek($bh,32*($e['first']+intdiv($off,StageStore::CHUNK)));$digest=fread($bh,32);
+                            if(!is_string($digest)||strlen($digest)!==32)throw new \RuntimeException('Cannot read upload index.');
+                            $grow=$this->appendBlock($path,$off,$data,bin2hex($digest));$blocks++;
+                            if($grow){$appended+=$grow;if($i!==$u['cursor']['index'])$u['ahead'][$i]=$off+strlen($data);}
+                        }
+                        $body->end();$accepted++;
+                    }catch(BatchRejected $r){$rejected=['span'=>$k,'code'=>$r->reason,'expectedOffset'=>$e?self::resumeOffset($path):null];break;}
+                }
+                $this->advanceCursor($id,$u,$ah);
+            }finally{if($ah)fclose($ah);if($bh)fclose($bh);}
+            self::atomic($dir.'/upload.json',json_encode($u,JSON_THROW_ON_ERROR));
+            return ['v'=>1,'phase'=>'uploading','acceptedSpans'=>$accepted,'appendedBytes'=>$appended,'cursor'=>$u['cursor'],'uploadedBytes'=>$u['uploadedBytes'],'totalBytes'=>$u['totalBytes'],'complete'=>$u['cursor']['index']>=$u['artifacts'],'deadlineHit'=>$hit,'serverMs'=>(int)round((microtime(true)-$started)*1000),'rejected'=>$rejected];
         });
     }
     private function table(array $t): TableStage {return new TableStage($this->db,$t['name'],$t['id'],true,($t['created']??false)||($t['schemaReplaced']??false)?['name'=>$t['source'],'schema'=>$t['schema']]:null);}
@@ -612,7 +731,7 @@ final class TransferImport {
                 if(microtime(true)>=$deadline)return $this->summary($s);
             }
             $dir=$this->dir($id);
-            foreach([...glob($dir.'/artifact-*',GLOB_ONLYDIR)?:[],$dir.'/authors.json'] as $path)self::remove($path);
+            foreach([...glob($dir.'/artifact-*',GLOB_ONLYDIR)?:[],$dir.'/authors.json',...array_merge(...array_map(fn($f)=>[$dir.'/'.$f,$dir.'/'.$f.'.tmp'],['artifacts.idx','blocks.idx','upload.json']))] as $path)self::remove($path);
             $s['cleanedUp']=true;unset($s['cleanupCursor']);$this->save($s);return $this->summary($s);
         },$id);
     }
