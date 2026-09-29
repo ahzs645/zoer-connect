@@ -1,5 +1,7 @@
 # Local two-site Zoer Connect fixture. Disposable: every credential here is a
 # test value for containers that only listen on 127.0.0.1.
+# DISABLE_WP_CRON: page views never spawn WP-Cron, so WordPress's own timed jobs
+# cannot write site options at arbitrary points of a scenario (see README).
 name: zoer-e2e
 
 x-wordpress: &wordpress
@@ -42,6 +44,7 @@ services:
       WORDPRESS_TABLE_PREFIX: wp_
       WORDPRESS_CONFIG_EXTRA: |
         define('ZOER_CONNECT_STORAGE_DIR', '/srv/source/zoer-private');
+        define('DISABLE_WP_CRON', true);
     volumes:
       - ../../zoer-connect.php:/srv/source/public/wp-content/plugins/zoer-connect/zoer-connect.php:ro
       - ../../includes:/srv/source/public/wp-content/plugins/zoer-connect/includes:ro
@@ -61,6 +64,7 @@ services:
       WORDPRESS_TABLE_PREFIX: wpd_
       WORDPRESS_CONFIG_EXTRA: |
         define('ZOER_CONNECT_STORAGE_DIR', '/var/www/zoer-private');
+        define('DISABLE_WP_CRON', true);
     volumes:
       - ../../zoer-connect.php:/var/www/html/wp-content/plugins/zoer-connect/zoer-connect.php:ro
       - ../../includes:/var/www/html/wp-content/plugins/zoer-connect/includes:ro

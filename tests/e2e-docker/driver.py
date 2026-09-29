@@ -450,6 +450,20 @@ def baseline():
     CTX['baseline'] = table_hashes('dest')
     CTX['usersHash'] = table_hashes('dest', ['wpd_users'])['wpd_users']
 
+NOISE = re.compile(r'_transient_|\bcron\]|session_tokens|auto-draft|quick_press|rewrite_rules|_pending\]')
+
+def baseline_diff():
+    """Tables differing from the baseline plus their non-ephemeral row differences, so a
+    failed restore check names the rows (and a legitimate later write is recognisable)."""
+    now = table_hashes('dest')
+    differing = sorted(t for t in set(now) | set(CTX['baseline']) if now.get(t) != CTX['baseline'].get(t))
+    lines = [l for l in row_diff({t: CTX['baselineRows'].get(t, []) for t in differing}, {t: rows('dest', 'SELECT * FROM `%s`' % t) for t in differing}) if not NOISE.search(l)] if differing else []
+    return differing, lines
+
+def check_restored(name):
+    differing, lines = baseline_diff()
+    return check(name, not differing, '%s %s' % (differing, lines))
+
 def scenario_3():
     print('\n== Scenario 3: Push (activation fence, review, replacements, author matching, createTables)', flush=True)
     view, files, data = CTX['pull']
@@ -595,9 +609,7 @@ def scenario_4():
         raise Abort('rollback refused')
     check('site reopened after rollback (200, no fence)', page('dest')[0] == 200 and not fence_active())
     check('created table removed from service (wpd_zc_custom gone)', 'wpd_zc_custom' not in tables('dest'))
-    now = table_hashes('dest')
-    diff = [t for t in set(now) | set(CTX['baseline']) if now.get(t) != CTX['baseline'].get(t)]
-    check('every destination table matches its pre-import content', not diff, diff)
+    check_restored('every destination table matches its pre-import content')
     check('published files restored/removed', not exists('dest', '/var/www/html/wp-content/plugins/zc-custom-table/zc-custom-table.php') and not exists('dest', '/var/www/html/wp-content/themes/zc-child/style.css'))
     extra = content_dirs() - CTX['dirs']
     check('rollback removes directories created by the import (no empty plugin/theme folders)', not extra, sorted(extra))
@@ -657,8 +669,7 @@ def scenario_5():
     check('legacy: admin login and key still valid', admin_login('dest') and api('dest', '/status')[0] == 200)
     status, s, _ = drive(iid, 'rollback', {'rolled_back', 'cancelled'})
     check('legacy rollback -> rolled_back', status == 200 and s['phase'] == 'rolled_back', (status, s))
-    now = table_hashes('dest')
-    check('legacy rollback restores every table', now == CTX['baseline'], [t for t in now if now[t] != CTX['baseline'].get(t)])
+    check_restored('legacy rollback restores every table')
     check('legacy (32 MiB file path) rollback removes created directories', not content_dirs() - CTX['dirs'], sorted(content_dirs() - CTX['dirs']))
     assert_cleanup('scenario 5b', iid, s)
 
@@ -696,7 +707,7 @@ def scenario_6():
     check('replace: identity, users and key retained', option('dest', 'home') == DEST_URL and table_hashes('dest', ['wpd_users'])['wpd_users'] == CTX['usersHash'] and api('dest', '/status')[0] == 200 and page('dest')[0] == 200)
     status, s, _ = drive(iid, 'rollback', {'rolled_back', 'cancelled'})
     check('replace rollback -> rolled_back and content restored', status == 200 and s['phase'] == 'rolled_back' and var('dest', 'SELECT post_title FROM wpd_posts WHERE ID=%d' % d['destPost']) == 'Destination only post', (status, s.get('error')))
-    check('replace rollback restores every table', table_hashes('dest') == CTX['baseline'])
+    check_restored('replace rollback restores every table')
     assert_cleanup('scenario 6', iid, s)
     # Without review; after cleanup the finished import can no longer be rolled back.
     iid, status, s = replace_import([{'find': 'Destination tagline', 'replace': 'Tagline replaced', 'regex': False, 'caseSensitive': True}], False, ['options'])
@@ -945,20 +956,15 @@ def scenario_9():
     check('published files match source digests', file_sha('dest', '/var/www/html/' + media['path']) == media['sha256'] and exists('dest', '/var/www/html/wp-content/themes/zc-child/style.css'))
     status, s, _ = drive(iid, 'rollback', {'rolled_back', 'cancelled'})
     check('batched push rollback -> rolled_back', status == 200 and s['phase'] == 'rolled_back', (status, s))
-    now = table_hashes('dest')
-    check('rollback restores every table', now == CTX['baseline'], [t for t in now if now[t] != CTX['baseline'].get(t)])
+    check_restored('rollback restores every table')
     check('rollback removes created directories', not content_dirs() - CTX['dirs'], sorted(content_dirs() - CTX['dirs']))
     assert_cleanup('scenario 9', iid, s)
 
 def final_checks():
     print('\n== Final state', flush=True)
-    now = table_hashes('dest')
-    differing = [t for t in set(now) | set(CTX['baseline']) if now.get(t) != CTX['baseline'].get(t)]
-    if differing:
-        noise = re.compile(r'_transient_|\bcron\]|session_tokens|auto-draft|quick_press|rewrite_rules|_pending\]')
-        for line in row_diff({t: CTX['baselineRows'].get(t, []) for t in differing}, {t: rows('dest', 'SELECT * FROM `%s`' % t) for t in differing}):
-            if not noise.search(line):
-                print('INFO   ' + line, flush=True)
+    differing, lines = baseline_diff()
+    for line in lines:
+        print('INFO   ' + line, flush=True)
     check('destination fully restored to its pre-test content', not differing, differing)
     check('no zoer_ private tables remain after cleanups', not zoer_tables(), zoer_tables())
     check('site live, no fence, admin login works', page('dest')[0] == 200 and not fence_active() and admin_login('dest'))

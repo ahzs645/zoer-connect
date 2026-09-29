@@ -15,7 +15,7 @@ class SnapshotDb {
   if(str_contains($sql,'OFFSET 0'))return [['ID'=>1,'body'=>"quote'\0binary",'empty'=>null]];
   return [];
  }
- function get_row($sql,$mode){$this->schemas++;return ['wp_posts','CREATE TABLE `wp_posts` (`ID` bigint PRIMARY KEY, `body` longblob, `empty` text)'.($this->failure==='ddl'&&$this->schemas>1?' changed':'')];}
+ function get_row($sql,$mode){$this->schemas++;return ['wp_posts','CREATE TABLE `wp_posts` (`ID` bigint PRIMARY KEY, `body` longblob, `empty` text) ENGINE=InnoDB'.($this->failure==='autoinc'?' AUTO_INCREMENT='.(5+$this->schemas):'').' DEFAULT CHARSET=utf8mb4'.($this->failure==='ddl'&&$this->schemas>1?' changed':'')];}
 }
 if(($argv[1]??'')==='--fatal'){$db=new SnapshotDb();$db->failure='fatal';DatabaseExporter::write($db,$argv[2],static fn()=>0,10);exit(99);}
 $root=sys_get_temp_dir().'/zoer-db-'.bin2hex(random_bytes(6));mkdir($root);
@@ -23,6 +23,10 @@ try{
  $db=new SnapshotDb();$path=$root.'/good.sql';DatabaseExporter::write($db,$path);$sql=file_get_contents($path);
  check(str_contains($sql,"X'71756f7465270062696e617279'")&&str_contains($sql,'NULL'),'binary values and NULL preserved');check(!str_contains($sql,'other_secret'),'unrelated tables excluded');
  check(in_array('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY',$db->queries)&&in_array('COMMIT',$db->queries),'one read-only consistent transaction committed');check((bool)array_filter($db->queries,fn($q)=>str_contains($q,'ORDER BY `ID` LIMIT')),'pagination ordered by primary key');check(!file_exists($path.'.partial'),'only complete artifact published');check((fileperms($path)&0777)===0600,'snapshot private permissions');
+ // Regression: MySQL 8/MariaDB report the live AUTO_INCREMENT inside the consistent snapshot, so a
+ // concurrent INSERT (transient, cron lock) between the two SHOW CREATE TABLE calls is not a schema change.
+ $db=new SnapshotDb();$db->failure='autoinc';$path=$root.'/autoinc.sql';DatabaseExporter::write($db,$path);$sql=file_get_contents($path);
+ check($db->schemas===2&&str_contains($sql,'AUTO_INCREMENT=6')&&str_contains($sql,"X'71756f7465270062696e617279'"),'concurrent AUTO_INCREMENT change is not a schema change (export succeeds, first DDL kept)');
  foreach(['engine','key','read','ddl','timeout','START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY','COMMIT'] as $failure){$db=new SnapshotDb();$db->failure=$failure;$path=$root.'/failed.sql';$caught=false;try{DatabaseExporter::write($db,$path,fn()=>$db->time,10);}catch(Throwable $e){$caught=true;check(!str_contains($e->getMessage(),'sensitive'),'errors omit database details');}check($caught,'failure rejected: '.$failure);check(!file_exists($path)&&!file_exists($path.'.partial'),'failed snapshot never published: '.$failure);if($failure!=='engine')check(in_array('ROLLBACK',$db->queries),'rollback attempted: '.$failure);}
  $path=$root.'/fatal.sql';$process=proc_open([PHP_BINARY,__FILE__,'--fatal',$path],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes);
  if(!is_resource($process))throw new RuntimeException('Cannot start timeout fixture');fclose($pipes[0]);$stdout=stream_get_contents($pipes[1]);$stderr=stream_get_contents($pipes[2]);fclose($pipes[1]);fclose($pipes[2]);$code=proc_close($process);

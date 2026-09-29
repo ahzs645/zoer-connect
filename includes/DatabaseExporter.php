@@ -53,6 +53,7 @@ final class DatabaseExporter {
         if($table===$prefix.'commentmeta'&&$droppedComment&&isset($present[$prefix.'comments']))$where[]="comment_id NOT IN (SELECT comment_ID FROM `{$prefix}comments` WHERE ".implode(' OR ',$droppedComment).')';
         return $where?' WHERE '.implode(' AND ',$where):'';
     }
+    private static function ddl(string $sql): string {return (string)preg_replace('/ AUTO_INCREMENT=[0-9]+(?= |$)/','',$sql);}
     /** Returns the exported table suffixes (names after the prefix). Empty $filters
      * means `database:true`: the 0.3.14 export; a filter object is never empty once normalized. */
     public static function write($db, string $destination, ?callable $clock = null, float $budgetSeconds = 40, array $filters = [], bool $selfSnapshot = false): array {
@@ -123,8 +124,10 @@ final class DatabaseExporter {
                     }
                     if(count($rows)<200)break;
                 }
+                // SHOW CREATE TABLE reports the live AUTO_INCREMENT counter even inside the
+                // consistent snapshot: a concurrent INSERT (a transient, a cron lock) is not DDL.
                 $after=$db->get_row("SHOW CREATE TABLE `$table`",ARRAY_N);
-                if($db->last_error||$after!==$create)throw new \RuntimeException('Schema changed during export.');
+                if($db->last_error||!is_array($after)||!isset($after[1])||$after[0]!==$create[0]||self::ddl($after[1])!==self::ddl($create[1]))throw new \RuntimeException('Schema changed during export.');
             }
             $write("SET FOREIGN_KEY_CHECKS=1;\n");$query('COMMIT');
             if(!fflush($out))throw new \RuntimeException('Cannot flush snapshot.');

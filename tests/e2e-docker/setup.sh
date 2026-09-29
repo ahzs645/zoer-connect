@@ -94,8 +94,11 @@ for url in https://source.test/ https://source.test/hello-source/ https://source
   curl -sk -o /dev/null --connect-to "$host:443:127.0.0.1:$PORT" "$url" || true
 done
 
-# Run the initial due cron events once so fresh-install housekeeping does not
-# happen in the middle of a scenario (cron itself stays enabled).
+# Run the initial due cron events once, explicitly. Page views never spawn WP-Cron
+# (DISABLE_WP_CRON, docker-compose.yml): WordPress's timed jobs write real options
+# (e.g. wp_update_comment_type_batch, scheduled one minute after the first admin
+# visit, adds finished_updating_comment_type), and one running at a random moment
+# of a scenario legitimately cancels a live-staged import or refuses its rollback.
 wp source cron event run --due-now >/dev/null 2>&1 || true
 wp dest cron event run --due-now >/dev/null 2>&1 || true
 

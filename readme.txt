@@ -33,6 +33,7 @@ Upload and activate the plugin. Open Tools > Zoer Connect to generate connection
 * Import options: custom and variant URL/path replacements, review before activation, late fencing, table creation from validated schemas, author matching, activation-setting control, pause/resume, backup cleanup, find-and-replace on the destination, cache purging and safe error reporting.
 * Tools > Zoer Connect lists recent transfers with backup cleanup for finished imports; export profiles are editable.
 * Escape LIKE wildcards in transient exclusions when a database filter object is sent, so only real transient rows are skipped; `database: true` keeps the 0.3.14 query.
+* Database snapshots (Pull and destination find-and-replace) no longer fail with "Schema changed during export." when a concurrent insert, such as a transient or cron lock, advances a table's AUTO_INCREMENT during the export.
 
 = 0.3.14 =
 * Enable Push for new keys and prepare shared-hosting migration during key generation. Preserve existing permission choices, revocation and advanced setup; keep per-transfer confirmation in Zoer.
