@@ -264,7 +264,8 @@ final class TransferImport {
         if(!is_file($path)){
             // A hard kill can leave the exporter's private partial file behind.
             if(file_exists($path.'.partial')&&!unlink($path.'.partial'))throw new \RuntimeException('Cannot reset database snapshot.');
-            DatabaseExporter::write($this->db,$path);$this->save($s);return;
+            // Export only the staged tables; users/usermeta are never replaced.
+            DatabaseExporter::write($this->db,$path,null,40,['tables'=>array_map(fn($t)=>substr($t['name'],strlen($this->db->prefix)),$s['tables']),'excludeTransients'=>true],true);$this->save($s);return;
         }
         $h=fopen($path,'rb');if(!$h)throw new \RuntimeException('Cannot verify database snapshot.');
         $ctx=hash_init('sha256');$chunks=[];$bytes=0;

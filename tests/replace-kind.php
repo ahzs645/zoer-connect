@@ -4,6 +4,7 @@ use ZoerConnect\TransferImport;
 $base=fixtureBase();$target='https://dest.example';$owner=hash('sha256','replace owner');
 $db=destination();
 $db->query("UPDATE `wp_posts` SET post_content='Old Brand at https://dest.example and old brand' WHERE ID=1");
+$db->insert('wp_options',['option_name'=>'wpmdb_settings','option_value'=>serialize(['key'=>'kept']),'autoload'=>'no']);
 $db->insert('wp_options',['option_name'=>'tagline','option_value'=>serialize(['text'=>'Old Brand forever']),'autoload'=>'yes']);
 $new=fn()=>new TransferImport($db,$base.'/public',$base.'/private',$owner,$target,true);
 $body=fn(array $options=[],array $extra=[])=>['kind'=>'replace','id'=>bin2hex(random_bytes(16)),'target'=>$target,'wordpressOnlyWriters'=>true,'destinationAdminId'=>1,'options'=>$options+['replacements'=>['custom'=>[['find'=>'Old Brand','replace'=>'New Brand','caseSensitive'=>false]]],'review'=>true]]+$extra;
@@ -23,6 +24,7 @@ try{
  [$s]=drive($new,$s['id'],['verification_required']);
  expect(row($db,'wp_posts','ID','1')['post_content']==='New Brand at https://dest.example and New Brand'&&unserialize(option($db,'tagline'))['text']==='New Brand forever','custom case-insensitive replacement applied in place, serialized lengths updated');
  expect($db->dump('wp_users')===$users&&$db->dump('wp_comments')===$comments&&row($db,'wp_posts','ID','1')['post_author']==='1'&&option($db,'home')===$target,'identity tables, authors and comment users unchanged');
+ expect(unserialize(option($db,'wpmdb_settings'))['key']==='kept','other migration tools\' settings survive a site replace');
  $s=$new()->finish($s['id']);expect($s['phase']==='complete'&&option($db,\ZoerConnect\CachePurge::OPTION)==='1','replace finishes and queues a cache purge');
  $s=rollbackAll($new,$s['id']);
  expect($s['phase']==='rolled_back'&&str_contains(row($db,'wp_posts','ID','1')['post_content'],'Old Brand'),'replace rolls back to the pre-replacement content');

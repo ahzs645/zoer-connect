@@ -26,7 +26,7 @@ final class DatabaseExporter {
     }
     /** Row filters in WP Migrate style. Dependent rows are dropped only when their parent row is excluded, so
      * orphaned meta, comments without a post and link-category relationships keep 0.3.14 behaviour. */
-    private static function where(string $table,string $prefix,array $f,array $present): string {
+    private static function where(string $table,string $prefix,array $f,array $present,bool $self=false): string {
         $list=static fn(array $v)=>$v?"'".implode("','",$v)."'":'';
         $keep=[];
         if($f['postTypes']!==null)$keep[]=$f['postTypes']?'post_type IN ('.$list($f['postTypes']).')':'0=1';
@@ -39,7 +39,8 @@ final class DatabaseExporter {
         $where=[];
         if($table===$prefix.'options'){
             // `_` is a LIKE wildcard; escape it so only real transient rows match.
-            $where[]="option_name NOT IN ('zoer_connect_connection','zoer_connect_profiles','zoer_connect_storage_dir') AND option_name NOT LIKE 'wpmdb%'";
+            // A self-snapshot (replace kind) replaces this site's own options: keep other tools' settings.
+            $where[]="option_name NOT IN ('zoer_connect_connection','zoer_connect_profiles','zoer_connect_storage_dir')".($self?'':" AND option_name NOT LIKE 'wpmdb%'");
             if($f['excludeTransients'])$where[]="option_name NOT LIKE '|_transient|_%' ESCAPE '|' AND option_name NOT LIKE '|_site|_transient|_%' ESCAPE '|'";
         }
         if($table===$prefix.'usermeta')$where[]="meta_key NOT IN ('_application_passwords','session_tokens')";
@@ -51,7 +52,7 @@ final class DatabaseExporter {
         return $where?' WHERE '.implode(' AND ',$where):'';
     }
     /** Returns the exported table suffixes (names after the prefix). */
-    public static function write($db, string $destination, ?callable $clock = null, float $budgetSeconds = 40, array $filters = []): array {
+    public static function write($db, string $destination, ?callable $clock = null, float $budgetSeconds = 40, array $filters = [], bool $selfSnapshot = false): array {
         $filters=self::filters($filters);
         $requestStarted=$clock===null ? ($_SERVER['REQUEST_TIME_FLOAT']??microtime(true)) : null;
         $clock ??= static fn() => microtime(true);
@@ -104,7 +105,7 @@ final class DatabaseExporter {
                 $order=[];
                 foreach($keys as $key){if(!preg_match('/^[A-Za-z0-9_]+$/D',$key['Column_name']))throw new \RuntimeException('Unsupported primary key.');$order[]='`'.$key['Column_name'].'`';}
                 $order=implode(',',$order);
-                $where=self::where($table,$prefix,$filters,$present);
+                $where=self::where($table,$prefix,$filters,$present,$selfSnapshot);
                 for($offset=0;;$offset+=200){
                     $rows=$db->get_results("SELECT * FROM `$table`$where ORDER BY $order LIMIT 200 OFFSET $offset",ARRAY_A);
                     $check();

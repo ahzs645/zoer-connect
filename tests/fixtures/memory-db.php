@@ -27,7 +27,7 @@ final class MemoryDb {
  private function fail(string $message){$this->last_error=$message;return false;}
  private function table(string $name): array {if(!isset($this->tables[$name]))throw new RuntimeException("Missing table $name");return $this->tables[$name];}
  private static function literal(string $v){if($v==='NULL')return null;if($v[0]==="'")return preg_replace('/\\\\(.)/s','$1',substr($v,1,-1));return $v;}
- private static function likeRegex(string $pattern): string {$out='';for($i=0;$i<strlen($pattern);$i++){$c=$pattern[$i];if($c==='\\'){$out.=preg_quote($pattern[++$i],'/');}elseif($c==='%')$out.='.*';elseif($c==='_')$out.='.';else $out.=preg_quote($c,'/');}return '/^'.$out.'$/s';}
+ private static function likeRegex(string $pattern,string $escape='\\'): string {$out='';for($i=0;$i<strlen($pattern);$i++){$c=$pattern[$i];if($c===$escape){$out.=preg_quote($pattern[++$i],'/');}elseif($c==='%')$out.='.*';elseif($c==='_')$out.='.';else $out.=preg_quote($c,'/');}return '/^'.$out.'$/s';}
  private static function cmp($a,$b): int {if($a===null||$b===null)return ($a===null)<=>($b===null)?:0;return is_numeric($a)&&is_numeric($b)?((float)$a<=>(float)$b):strcmp((string)$a,(string)$b);}
  private function key(array $t,array $row): string {return implode("\0",array_map(fn($c)=>(string)($row[$c]??''),$t['pk']));}
  /** WHERE evaluator: (, ), AND, OR, col op value, NOT IN (...), [NOT] LIKE. */
@@ -43,6 +43,7 @@ final class MemoryDb {
    if($op==='NOT'){$op='NOT '.strtoupper($next());}
    if($op==='NOT IN'||$op==='IN'){if($next()!=='(')throw new RuntimeException('IN');$vals=[];while(($t=$next())!==')')if($t!==',')$vals[]=self::literal($t);return fn($r)=>in_array($r[$col]??null,$vals,true)!==($op==='NOT IN');}
    $v=self::literal($next());
+   if(str_contains($op,'LIKE')&&strtoupper((string)$peek())==='ESCAPE'){$next();$esc=self::literal($next());$re=self::likeRegex($v,$esc);return $op==='LIKE'?fn($r)=>(bool)preg_match($re,(string)($r[$col]??'')):fn($r)=>!preg_match($re,(string)($r[$col]??''));}
    return match($op){'='=>fn($r)=>self::cmp($r[$col]??null,$v)===0&&($r[$col]??null)!==null,'>'=>fn($r)=>self::cmp($r[$col]??null,$v)>0,'>='=>fn($r)=>self::cmp($r[$col]??null,$v)>=0,'<'=>fn($r)=>self::cmp($r[$col]??null,$v)<0,'LIKE'=>fn($r)=>(bool)preg_match(self::likeRegex($v),(string)($r[$col]??'')),'NOT LIKE'=>fn($r)=>!preg_match(self::likeRegex($v),(string)($r[$col]??'')),default=>throw new RuntimeException("Operator $op")};
   };
   $and=function()use(&$atom,$peek,$next){$e=$atom();while(strtoupper((string)$peek())==='AND'){$next();$l=$e;$r=$atom();$e=fn($x)=>$l($x)&&$r($x);}return $e;};
