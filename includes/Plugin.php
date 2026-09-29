@@ -2,6 +2,7 @@
 namespace ZoerConnect;
 
 final class Plugin {
+    public const VERSION = '0.4.0';
     private static bool $applicationPassword = false;
     public static function boot(): void {
         add_action('application_password_did_authenticate', static function () { self::$applicationPassword = true; });
@@ -79,6 +80,11 @@ final class Plugin {
         if($owner==='')throw new \RuntimeException('Configure a connection key first.');
         return $paged ? new PagedExport($root,[ABSPATH,$_SERVER['DOCUMENT_ROOT']],ABSPATH,$owner) : new RemoteExport($root,[ABSPATH,$_SERVER['DOCUMENT_ROOT']],ABSPATH,$owner);
     }
+    /** Active theme slugs (stylesheet and parent template) and active plugin slugs for 'active' resource modes. */
+    public static function activeResources(): array {
+        $plugins=[];foreach((array)get_option('active_plugins',[]) as $file)if(is_string($file)&&$file!=='')$plugins[]=str_contains($file,'/')?strstr($file,'/',true):$file;
+        return ['themes'=>array_values(array_unique(array_filter([(string)get_stylesheet(),(string)get_template()]))),'plugins'=>array_values(array_unique($plugins))];
+    }
     /** Runs before regular plugins, including when a transfer left them unusable. */
     public static function earlyImportRecovery(string $route): array {
         global $wpdb;
@@ -129,8 +135,10 @@ final class Plugin {
                 'methods' => $method, 'permission_callback' => static function($request) use($path){
                     $auth=self::authorize($request);if(is_wp_error($auth))return $auth;
                     $record=get_option(ConnectionKey::OPTION,null);
-                    $scope=str_starts_with($path,'/exports')?'pull':($path==='/status'?'status':'push');
-                    if(($scope==='pull'||$record!==null) && (!is_array($record)||!ConnectionKey::permits($record,$scope)))return new \WP_Error('zoer_permission_disabled',ucfirst($scope).' permission is disabled on this site.',['status'=>403]);
+                    // Diagnostics are read-only preflight data for either transfer direction.
+                    $scopes=str_starts_with($path,'/exports')?['pull']:($path==='/status'?['status']:($path==='/diagnostics'?['push','pull']:['push']));
+                    $permitted=is_array($record)&&array_filter($scopes,static fn($scope)=>ConnectionKey::permits($record,$scope));
+                    if(($scopes===['pull']||$record!==null) && !$permitted)return new \WP_Error('zoer_permission_disabled',implode(' or ',array_map('ucfirst',$scopes)).' permission is disabled on this site.',['status'=>403]);
                     return true;
                 },
                 'callback' => static function ($request) use ($handler) {
@@ -162,17 +170,21 @@ final class Plugin {
             $record=get_option(ConnectionKey::OPTION,null);
             $private=self::storageRoot();
             $importReady=ImportAdmin::ready($private,ABSPATH);
-            return ['version' => '0.3.14', 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => ['pagedExport'=>true,'connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'selectivePush'=>true,'artifactReuse'=>function_exists('link'), 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady], 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK];
+            $capabilities=['pagedExport'=>true,'connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'selectivePush'=>true,'artifactReuse'=>function_exists('link'), 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady];
+            // API version 2 (0.4.0). Import-side flags describe the protocol implemented by this version.
+            foreach(['replacementRules','replacementVariants','reviewPause','createTables','authorMapping','keepActivePlugins','lateFence','importPauseResume','importCleanup','importList','siteReplace','cachePurge','databaseFilters','resourceModes','mediaSince','diagnostics','safeErrors'] as $capability)$capabilities[$capability]=true;
+            return ['version' => '0.4.0', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK];
         });
-        $register('/exports/paged', 'POST', static function($r){global $wpdb,$wp_version;$b=$r->get_json_params();if(!is_array($b))throw new \InvalidArgumentException('JSON selections required.');return self::exports(true)->create($b,['url'=>untrailingslashit(home_url()),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version]);});
-        $register('/exports/paged/(?P<id>[a-f0-9]{32})/step','POST',static function($r){global $wpdb;return self::exports(true)->step($r['id'],static fn($p)=>DatabaseExporter::write($wpdb,$p));});
+        $register('/diagnostics', 'GET', static function(){global $wpdb;return Diagnostics::collect($wpdb);});
+        $register('/exports/paged', 'POST', static function($r){global $wpdb,$wp_version;$b=$r->get_json_params();if(!is_array($b))throw new \InvalidArgumentException('JSON selections required.');return self::exports(true)->create($b,['url'=>untrailingslashit(home_url()),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version,'abspath'=>untrailingslashit(ABSPATH)],self::activeResources());});
+        $register('/exports/paged/(?P<id>[a-f0-9]{32})/step','POST',static function($r){global $wpdb;return self::exports(true)->step($r['id'],static fn($p,array $filters=[])=>DatabaseExporter::write($wpdb,$p,null,40,$filters));});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})/manifest','GET',static function($r){$o=$r['offset'];if(!is_string($o)||!preg_match('/^(0|[1-9][0-9]{0,6})$/D',$o))throw new \InvalidArgumentException('Invalid manifest offset.');return self::exports(true)->manifest($r['id'],(int)$o);});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})/batch','GET',static function($r){foreach(['index','offset'] as $k)if(!is_string($r[$k])||!preg_match('/^(0|[1-9][0-9]{0,12})$/D',$r[$k]))throw new \InvalidArgumentException('Invalid export range.');return self::exports(true)->batch($r['id'],(int)$r['index'],(int)$r['offset']);});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})','DELETE',static fn($r)=>self::exports(true)->cancel($r['id']));
         $register('/exports', 'POST', static function($r){
             global $wpdb, $wp_version;
             $body=$r->get_json_params();if(!is_array($body))throw new \InvalidArgumentException('JSON export selections required.');
-            return self::exports()->create($body,['url'=>untrailingslashit(home_url()),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version],static fn($path)=>DatabaseExporter::write($wpdb,$path));
+            return self::exports()->create($body,['url'=>untrailingslashit(home_url()),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version,'abspath'=>untrailingslashit(ABSPATH)],static fn($path,array $filters=[])=>DatabaseExporter::write($wpdb,$path,null,40,$filters),self::activeResources());
         });
         $register('/exports/(?P<id>[a-f0-9]{32})','GET',static fn($r)=>self::exports()->status($r['id']));
         $register('/exports/(?P<id>[a-f0-9]{32})','DELETE',static fn($r)=>self::exports()->cancel($r['id']));
@@ -210,11 +222,12 @@ final class Plugin {
     }
     public static function admin(): void {
         if (!current_user_can('manage_options')) return;
-        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.3.14 — WordPress transfers and recovery.</p>';
+        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.4.0 — WordPress transfers and recovery.</p>';
         echo '<p>Imports require explicit destination setup and Push permission. Review the destination and selected resources in Zoer before importing.</p>';
         ConnectionAdmin::render();
         ExportAdmin::render();
         ImportAdmin::render();
+        TransferAdmin::render();
         echo '<details><summary>Advanced: application passwords</summary><p>API clients can also use WordPress application passwords. The Push permission above applies to these clients too once connection settings have been configured.</p>';
         echo '<p><a class="button" href="' . esc_url(admin_url('profile.php#application-passwords-section')) . '">Manage application passwords</a></p>';
         echo '<p>Revoke the application password from your profile to disconnect. WordPress application passwords inherit the account’s capabilities; they are not restricted to this plugin.</p></details>';

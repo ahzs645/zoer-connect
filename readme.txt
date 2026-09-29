@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.3.14
+Stable tag: 0.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -16,6 +16,8 @@ WordPress requests reaching the protection pause during application and recovery
 
 Supported: matching existing InnoDB schemas with primary keys, selected themes/plugins/media, SQL up to 2 GiB and individual files and originals up to 2 GiB with block-capable Zoer (older clients retain the 32 MiB path). Core, MU plugins, connector files, configuration, unsafe paths, foreign keys/triggers, early drop-ins, multisite and distributed multi-host storage are unsupported. Destination user identities remain intact. Rollback refuses substantive edits made after completion.
 
+Pull can filter tables, post types, revisions, spam comments and transients, and select themes and plugins by mode or media by date. Imports can review changes before activation, apply custom find-and-replace rules, match authors and create missing tables from a validated schema. Read-only diagnostics report compatibility warnings before a transfer.
+
 Large local exports run in a DDEV CLI worker independently of HTTP time limits. Hosted remote database Pull remains bounded to a single request and fails closed if interrupted. Retain the original connection key for recovering an active job; automatic key-generation rebinding is unavailable.
 
 == Installation ==
@@ -23,10 +25,19 @@ Upload and activate the plugin. Open Tools > Zoer Connect to generate connection
 
 == Changelog ==
 
+= 0.4.0 =
+* API version 2 for WP Migrate-style transfers. `/status` reports `apiVersion` and per-feature capabilities; older Zoer clients keep the 0.3.14 behaviour.
+* Pull database filters: table subset, post type inclusion list, exclude revisions, spam comments and (by default) transients. Dependent meta, comments and term relationships follow excluded posts.
+* Pull resource modes for themes and plugins (all, active, selected, all except) and a media "modified since" date. Export responses report the source path and exported tables.
+* Read-only `/diagnostics` preflight for Push or Pull keys: WordPress, PHP and database facts, tables, post types, themes, plugins and drop-ins, with warnings for firewalls, page and object caches, table engines, foreign keys, triggers, mixed-case tables, search visibility and HTTPS.
+* Import options: custom and variant URL/path replacements, review before activation, late fencing, table creation from validated schemas, author matching, activation-setting control, pause/resume, backup cleanup, find-and-replace on the destination, cache purging and safe error reporting.
+* Tools > Zoer Connect lists recent transfers with backup cleanup for finished imports; export profiles are editable.
+* Escape LIKE wildcards in transient exclusions so only real transient rows are skipped.
+
 = 0.3.14 =
 * Enable Push for new keys and prepare shared-hosting migration during key generation. Preserve existing permission choices, revocation and advanced setup; keep per-transfer confirmation in Zoer.
 
-= 0.3.14 =
+= 0.3.13 =
 Preserve the destination's search-engine visibility during database Push. After a completed Push or rollback, refresh permalink rules once on a normal WordPress request, without rewriting the host's .htaccess file.
 
 = 0.3.12 =

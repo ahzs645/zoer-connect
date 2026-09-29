@@ -17,10 +17,13 @@ final class RemoteExport {
     private function read(string $id,bool $allowExpired=false):array{$dir=$this->directory($id);$raw=@file_get_contents($dir.'/state.json');$job=$raw===false?null:json_decode($raw,true);if(!is_array($job)||!is_string($job['owner']??null)||!hash_equals($job['owner'],$this->owner))throw new \RuntimeException('Export unavailable.');if(!$allowExpired&&$job['expiresAt']<=time())throw new \RuntimeException('Export expired. Start a new pull.');return $job;}
     private function save(array $job):void{$dir=$this->directory($job['id']);$tmp=$dir.'/state.tmp';$data=json_encode($job,JSON_THROW_ON_ERROR);if(file_put_contents($tmp,$data)!==strlen($data))throw new \RuntimeException('Cannot save export.');chmod($tmp,0600);if(!rename($tmp,$dir.'/state.json'))throw new \RuntimeException('Cannot save export.');}
     private function publicJob(array $job):array{unset($job['owner'],$job['requestHash'],$job['databasePending']);return $job;}
-    public function create(array $input,array $source,callable $database):array{return $this->locked(function()use($input,$source,$database){
-        if(array_diff(array_keys($input),['clientId','profile','database'])||!is_bool($input['database']??null)||!is_array($input['profile']??null))throw new \InvalidArgumentException('Profile and database selection required.');
+    /** $database(string $path, array $filters): ?array receives normalized filters and may return exported table suffixes. */
+    public function create(array $input,array $source,callable $database,array $active=[]):array{return $this->locked(function()use($input,$source,$database,$active){
+        if(array_diff(array_keys($input),['clientId','profile','database'])||!array_key_exists('database',$input)||!is_array($input['profile']??null))throw new \InvalidArgumentException('Profile and database selection required.');
+        $selection=DatabaseExporter::selection($input['database']);$wantsDatabase=$selection!==false;
         $id=$input['clientId']??'';$dir=$this->directory($id);$profile=ExportProfile::normalize($input['profile']);
-        $requestHash=hash('sha256',json_encode([$profile,$input['database']],JSON_THROW_ON_ERROR));
+        // Binding is unchanged for boolean selections, so older clients retry against 0.3.14 artifacts.
+        $requestHash=hash('sha256',json_encode([$profile,$selection],JSON_THROW_ON_ERROR));
         if(is_dir($dir)){$job=$this->read($id);if(!hash_equals($job['requestHash'],$requestHash))throw new \InvalidArgumentException('Export ID already has different selections.');if($job['databasePending']??false)$job=$this->prepareDatabase($job,$database);return $this->publicJob($job);}
         foreach(glob($this->root.'/*',GLOB_ONLYDIR)?:[] as $oldDir){
             if(is_link($oldDir)||!preg_match('/^[a-f0-9]{32}$/D',basename($oldDir)))continue;
@@ -29,24 +32,25 @@ final class RemoteExport {
         }
 
         if(count(glob($this->root.'/*',GLOB_ONLYDIR)?:[])>=2)throw new \RuntimeException('Cancel an existing export before starting another.');
-        $plan=FileExporter::plan($this->sourceRoot,$profile);
+        $plan=FileExporter::plan($this->sourceRoot,$profile,$active);
         if($plan['bytes']>1073741824)throw new \InvalidArgumentException('File export exceeds 1 GiB.');
-        if(!$plan['files']&&!$input['database'])throw new \InvalidArgumentException('Select at least one resource.');
+        if(!$plan['files']&&!$wantsDatabase)throw new \InvalidArgumentException('Select at least one resource.');
         if(disk_free_space($this->root)<$plan['bytes']+DatabaseExporter::MAX_BYTES+67108864)throw new \RuntimeException('Insufficient private export storage.');
         if(!mkdir($dir,0700))throw new \RuntimeException('Cannot reserve export.');
         try{
             $files=$plan['files'];
-            $job=['id'=>$id,'owner'=>$this->owner,'requestHash'=>$requestHash,'status'=>'preparing','profile'=>$profile,'database'=>$input['database'],'databasePending'=>$input['database'],'source'=>$source,'files'=>$files,'nextIndex'=>0,'expiresAt'=>time()+self::TTL,'maxChunkBytes'=>self::CHUNK];
+            $job=['id'=>$id,'owner'=>$this->owner,'requestHash'=>$requestHash,'status'=>'preparing','profile'=>$profile,'database'=>$selection,'databasePending'=>$wantsDatabase,'source'=>$source+['tables'=>[]],'files'=>$files,'nextIndex'=>0,'expiresAt'=>time()+self::TTL,'maxChunkBytes'=>self::CHUNK];
             // Persist ownership before expensive work so request death is recoverable by the same create.
             $this->save($job);
-            if($input['database'])$job=$this->prepareDatabase($job,$database);
+            if($wantsDatabase)$job=$this->prepareDatabase($job,$database);
             return $this->publicJob($job);
         }catch(\Throwable $e){$this->remove($id);throw $e;}
     });}
     private function prepareDatabase(array $job,callable $database):array{
         $dir=$this->directory($job['id']);
         foreach(['0.bin','0.bin.partial'] as $name){$path=$dir.'/'.$name;if(is_link($path))throw new \RuntimeException('Unsafe snapshot.');if(is_file($path))unlink($path);}
-        $database($dir.'/0.bin');clearstatcache();
+        $tables=$database($dir.'/0.bin',is_array($job['database'])?$job['database']:[]);clearstatcache();
+        if(is_array($tables))$job['source']['tables']=array_values($tables);
         $path=$dir.'/0.bin';$bytes=is_file($path)?filesize($path):false;
         if(is_link($path)||$bytes===false||$bytes<1||$bytes>DatabaseExporter::MAX_BYTES)throw new \RuntimeException('Invalid database snapshot.');
         array_unshift($job['files'],['path'=>'database.sql','bytes'=>$bytes,'sha256'=>hash_file('sha256',$path)]);
