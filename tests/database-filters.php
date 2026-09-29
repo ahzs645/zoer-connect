@@ -39,10 +39,13 @@ try{
  check(DatabaseExporter::filters(['postTypes'=>['post','page','post']])['postTypes']===['page','post'],'post types deduplicated and ordered for stable bindings');
  foreach([['postTypes'=>["post' OR 1=1"]],['tables'=>['posts`; DROP']],['tables'=>'posts'],['tables'=>['a'=>'posts']],['excludeSpam'=>'yes'],['sql'=>'SELECT 1'],['postTypes'=>[1]]] as $i=>$bad)denied(fn()=>DatabaseExporter::selection($bad),'invalid filter rejected #'.$i);
  denied(fn()=>DatabaseExporter::selection('yes'),'non-boolean, non-object selection rejected');
- [$tables,$rows,$sql]=$run([]);
+ [$tables,$rows,$sql,$db]=$run([]);
  check($tables===['commentmeta','comments','options','postmeta','posts','term_relationships','term_taxonomy'],'default export returns every prefixed table suffix');
  check(!str_contains($sql,'other_secret'),'unprefixed tables still excluded');
- check($rows['wp_options']===['1','6','7','8','11'],'default excludes exactly real transient families, connector state and wpmdb options');
+ // database:true (no filter object) keeps the 0.3.14 query byte-for-byte, including its unescaped LIKE wildcards.
+ check(in_array("SELECT * FROM `wp_options` WHERE option_name NOT IN ('zoer_connect_connection','zoer_connect_profiles','zoer_connect_storage_dir') AND option_name NOT LIKE 'wpmdb%' AND option_name NOT LIKE '_transient_%' AND option_name NOT LIKE '_site_transient_%' ORDER BY `option_id` LIMIT 200 OFFSET 0",$db->queries,true)&&$rows['wp_options']===['1'],'database:true options query identical to 0.3.14');
+ [,$rows]=$run(DatabaseExporter::selection([]));
+ check($rows['wp_options']===['1','6','7','8','11'],'filter object excludes exactly real transient families, connector state and wpmdb options');
  check(count($rows['wp_posts'])===4&&count($rows['wp_postmeta'])===5&&count($rows['wp_comments'])===4&&count($rows['wp_term_relationships'])===5,'default export keeps every content row');
  $db=new FilterDb();denied(fn()=>DatabaseExporter::write($db,$root.'/legacy.sql'),'unselected legacy engine still blocks a full export','Pull requires InnoDB tables.');
  $db=new FilterDb();[$tables,$rows]=[DatabaseExporter::write($db,$root.'/subset.sql',null,40,['tables'=>['posts','options']]),exported(file_get_contents($root.'/subset.sql'))];

@@ -33,9 +33,10 @@ try{
  $s=$new()->create($body(['review'=>false]));
  [$s]=drive($new,$s['id'],['checking_artifacts']);
  $db->query("UPDATE `wp_posts` SET post_title='edited after snapshot' WHERE ID=1");
- reject(fn()=>drive($new,$s['id'],['verification_required']),'edit after the replacement snapshot aborts activation','Destination changed since preparation');
+ [$s]=drive($new,$s['id'],['cancelled','verification_required']);
+ expect($s['phase']==='cancelled'&&$s['error']['message']==='Destination changed since preparation.'&&$s['error']['phase']==='reserving'&&!is_file($base.'/private/write-fence.json'),'edit after the replacement snapshot cancels activation without pausing the site');
  $s=rollbackAll($new,$s['id']);
- expect($s['phase']==='rolled_back'&&row($db,'wp_posts','ID','1')['post_title']==='edited after snapshot','concurrent edit preserved');
+ expect($s['phase']==='cancelled'&&row($db,'wp_posts','ID','1')['post_title']==='edited after snapshot','concurrent edit preserved');
  $s=$new()->create($body(['tables'=>['missing_table']]));
  $e=reject(fn()=>drive($new,$s['id'],['review_required']),'unknown selected table refused during snapshotting','A selected table does not exist');
  expect($new()->status($s['id'])['error']['phase']==='snapshotting'&&$new()->rollback($s['id'])['phase']==='cancelled','snapshot failure recorded and cancellable');

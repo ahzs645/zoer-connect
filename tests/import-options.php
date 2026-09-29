@@ -71,11 +71,12 @@ try{
  [$s]=drive($new,$s['id'],['reserving']);
  expect(!is_file($base.'/private/write-fence.json'),'staging completed without reserving the site');
  $db->query("UPDATE `wp_posts` SET post_title='edited while staging' WHERE ID=10");
- reject(fn()=>drive($new,$s['id'],['verification_required']),'live edit during staging aborts activation','Destination changed since preparation');
+ [$s,$seen]=drive($new,$s['id'],['cancelled','verification_required']);
+ expect($s['phase']==='cancelled'&&!in_array('preparing_files',$seen,true)&&!is_file($base.'/private/write-fence.json'),'live edit during staging cancels activation before any fence');
  $s=$new()->status($s['id']);
  expect($s['error']===['code'=>'zoer_import_failed','message'=>'Destination changed since preparation.','phase'=>'reserving']&&file_get_contents($base.'/public/'.$path)==='original','safe last error persisted; files untouched');
  $s=rollbackAll($new,$s['id']);
- expect($s['phase']==='rolled_back'&&$s['error']===null&&row($db,'wp_posts','ID','10')['post_title']==='edited while staging'&&!is_file($base.'/private/write-fence.json'),'rollback keeps the live edit, clears the error and reopens');
+ expect($s['phase']==='cancelled'&&row($db,'wp_posts','ID','10')['post_title']==='edited while staging'&&!is_file($base.'/private/write-fence.json'),'cancelled import keeps the live edit and stays open');
  $aborted=$s['id'];
 
  // Cleanup and listing.
@@ -93,7 +94,11 @@ try{
  expect($new()->rollback($s['id'])['phase']==='cancelled','unstarted import cancels');
  // Safe errors never carry filesystem paths or raw PHP errors.
  $e=TransferImport::safeError(new RuntimeException('Cannot open /var/private/.zoer/import-x/state.json now'),'uploading');
- expect($e===['code'=>'zoer_import_failed','message'=>'Cannot open [path] now','phase'=>'uploading'],'filesystem paths stripped from safe errors');
+ expect($e===['code'=>'zoer_import_failed','message'=>'Cannot open [path]','phase'=>'uploading'],'filesystem paths stripped from safe errors');
+ expect(TransferImport::safeError(new RuntimeException('Cannot open /home/acme/Local Sites/shop/app/public/wp-content/x.php'))['message']==='Cannot open [path]'&&TransferImport::safeError(new RuntimeException("Missing 'C:\\Users\\Jane Doe\\site\\wp-config.php' now"))['message']==="Missing '[path]' now",'paths containing spaces redacted up to a quote or the end');
+ $sql=new class("Duplicate entry 'jane@example.com' for key 'user_email'") extends RuntimeException {};
+ expect(TransferImport::safeError($sql)['message']==='Import could not advance. Retry or roll back using the same connection.'&&TransferImport::safeError(new UnexpectedValueException('RecursiveDirectoryIterator failed'))['message']==='Import could not advance. Retry or roll back using the same connection.','RuntimeException subclasses (mysqli_sql_exception-like) never pass their text through');
+ expect(TransferImport::safeError(new \ZoerConnect\StageChanged('Destination changed since preparation.'))['message']==='Destination changed since preparation.'&&TransferImport::safeError(new InvalidArgumentException('Invalid import ID.'))['message']==='Invalid import ID.','plugin exception classes and plain domain exceptions pass through');
  expect(TransferImport::safeError(new TypeError('secret internals'))['message']==='Import could not advance. Retry or roll back using the same connection.'&&strlen(TransferImport::safeError(new RuntimeException(str_repeat('x',900)))['message'])===300,'non-domain errors generic; messages capped');
  echo "PASS import options, activation fence, review, created tables, author mapping, cleanup and safe errors\n";
 }finally{removeTree($base);}

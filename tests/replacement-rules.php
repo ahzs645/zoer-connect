@@ -50,3 +50,18 @@ reject(fn()=>Replacement::custom([['find'=>'/(/','replace'=>'b','regex'=>true]])
 reject(fn()=>Replacement::custom([['find'=>'a','replace'=>'b','sql'=>'DROP']]),'unknown custom row key refused');
 reject(fn()=>Replacement::custom([['find'=>'a','replace'=>'b','regex'=>'yes']]),'non-boolean custom flag refused');
 reject(fn()=>Replacement::apply('x',[['mode'=>'regex','find'=>'/x/','replace'=>'y','atomic'=>true]]),'atomic regex rule refused');
+// 0.3.14 parity: without client options the rules stay sequential, in order and undeduplicated.
+$v='<img src="https://old.example/wp/wp-content/uploads/a.jpg"> <a href="https://old.example/about">';
+expect(Replacement::apply($v,Replacement::legacy(['https://old.example','https://old.example','https://old.example/wp'],'https://new.example'))==='<img src="https://new.example/wp/wp-content/uploads/a.jpg"> <a href="https://new.example/about">','legacy rules keep the 0.3.14 home-first output');
+expect(Replacement::apply('https://old.example/x',Replacement::legacy(['https://old.example/','https://old.example'],'https://old.example.org'))==='https://old.example.org.org/x','legacy rules re-match sequentially exactly like 0.3.14');
+// Mapped sources: each source URL (and its variants) goes to its own destination in one longest-first pass.
+$rules=Replacement::rules(['https://old.example'=>'https://new.example','https://old.example/wp'=>'https://new.example/core'],'https://new.example',['variants'=>true]);
+expect(Replacement::apply('https://old.example/wp/wp-content/a.jpg https://old.example/about http://old.example/wp/x https:\/\/old.example\/wp\/y //old.example/wp/z',$rules)==='https://new.example/core/wp-content/a.jpg https://new.example/about https://new.example/core/x https:\/\/new.example\/core\/y //new.example/core/z','mapped source URLs and their variants use their own destination');
+// Source paths need two segments and must be followed by a path boundary.
+$rules=Replacement::rules(['https://old.example'],'https://new.example',['paths'=>true],'/app','/var/www/html');
+expect(array_column($rules,'group')===['automatic']&&Replacement::apply('https://old.example/apple-pie /application /app/wp-content',$rules)==='https://new.example/apple-pie /application /app/wp-content','one-segment source path omitted instead of corrupting URLs');
+$rules=Replacement::rules([],'https://new.example',['paths'=>true],'/var/www','/srv/site');
+expect(Replacement::apply('/var/www/x "/var/www" /var/www-old/y /var/wwwroot \/var\/www\/z \/var\/wwwroot (/var/www) </var/www< \'/var/www\' /var/www',$rules,$n)==='/srv/site/x "/srv/site" /var/www-old/y /var/wwwroot \/srv\/site\/z \/var\/wwwroot (/srv/site) </srv/site< \'/srv/site\' /srv/site'&&$n===7,'path rules stop at a boundary, plain and JSON-escaped');
+// caseSensitive:false regex rows are validated as they will run (leading whitespace before the delimiter is legal PCRE).
+$custom=Replacement::custom([['find'=>' /foo/','replace'=>'bar','regex'=>true,'caseSensitive'=>false]]);
+expect(Replacement::apply('FOO',Replacement::rules([],'https://new.example',['automatic'=>false,'custom'=>$custom]))==='bar','case-insensitive regex row validated and applied in its transformed form');

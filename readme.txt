@@ -32,7 +32,7 @@ Upload and activate the plugin. Open Tools > Zoer Connect to generate connection
 * Read-only `/diagnostics` preflight for Push or Pull keys: WordPress, PHP and database facts, tables, post types, themes, plugins and drop-ins, with warnings for firewalls, page and object caches, table engines, foreign keys, triggers, mixed-case tables, search visibility and HTTPS.
 * Import options: custom and variant URL/path replacements, review before activation, late fencing, table creation from validated schemas, author matching, activation-setting control, pause/resume, backup cleanup, find-and-replace on the destination, cache purging and safe error reporting.
 * Tools > Zoer Connect lists recent transfers with backup cleanup for finished imports; export profiles are editable.
-* Escape LIKE wildcards in transient exclusions so only real transient rows are skipped.
+* Escape LIKE wildcards in transient exclusions when a database filter object is sent, so only real transient rows are skipped; `database: true` keeps the 0.3.14 query.
 
 = 0.3.14 =
 * Enable Push for new keys and prepare shared-hosting migration during key generation. Preserve existing permission choices, revocation and advanced setup; keep per-transfer confirmation in Zoer.

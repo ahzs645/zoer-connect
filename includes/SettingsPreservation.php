@@ -5,6 +5,8 @@ require_once __DIR__.'/CachePurge.php';
 
 /** Preserve destination identity while replacing ordinary site options. */
 final class SettingsPreservation {
+    /** Destination runtime options refreshed again at cutover (see TableStage). */
+    public const RUNTIME=['cron',RewriteRefresh::OPTION,CachePurge::OPTION];
     public static function apply($db, string $stage): void {
         if(!preg_match('/^zoer_s_[a-f0-9]{16}$/D',$stage))throw new \InvalidArgumentException('Invalid staging table.');
         $keys=['cron','home','siteurl','admin_email','new_admin_email','upload_path','upload_url_path','blog_public',$db->prefix.'user_roles','zoer_connect_profiles','zoer_connect_connection','zoer_connect_storage_dir',RewriteRefresh::OPTION,CachePurge::OPTION];

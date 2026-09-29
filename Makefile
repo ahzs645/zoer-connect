@@ -40,6 +40,7 @@ test: lint
 	php tests/table-create.php
 	php tests/import-options.php
 	php tests/replace-kind.php
+	php tests/import-fixes.php
 	php tests/import-admin.php
 	php tests/admin-transfers.php
 	php tests/request-drain.php

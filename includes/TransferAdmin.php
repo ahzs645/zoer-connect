@@ -19,7 +19,7 @@ final class TransferAdmin {
         usort($out,static fn($a,$b)=>strcmp($b['createdAt'],$a['createdAt'])?:strcmp($a['id'],$b['id']));
         return array_slice($out,0,50);
     }
-    private static function supported(): bool {require_once __DIR__.'/TransferImport.php';return method_exists(TransferImport::class,'cleanup');}
+    private static function supported(): bool {require_once __DIR__.'/TransferImport.php';return method_exists(TransferImport::class,'adminCleanup');}
     public static function cleanup(): void {
         if(!current_user_can('manage_options')||is_multisite())wp_die('Administrator on a single site required.',403);
         check_admin_referer('zoer_import_cleanup');
@@ -30,13 +30,15 @@ final class TransferAdmin {
             $private=Plugin::storageRoot();$import=null;
             foreach(self::imports($private) as $item)if($item['id']===$id)$import=$item;
             if(!$import||!in_array($import['phase'],self::TERMINAL,true))throw new \RuntimeException('Only completed, rolled back or cancelled imports can be cleaned up.');
-            $record=get_option(ConnectionKey::OPTION,[]);
-            if(!is_array($record)||!is_string($record['hash']??null))throw new \RuntimeException('A current connection key is required to clean up backups.');
+            // An administrator may clean up journals of any key generation, including
+            // ones created before a key rotation; the owner hash is not consulted.
+            $record=get_option(ConnectionKey::OPTION,[]);$owner=is_array($record)&&is_string($record['hash']??null)&&preg_match('/^[a-f0-9]{64}$/D',$record['hash'])?$record['hash']:str_repeat('0',64);
             global $wpdb;
-            (new TransferImport($wpdb,ABSPATH,$private,$record['hash'],rtrim((string)get_option('home'),'/'),true))->cleanup($id);
+            (new TransferImport($wpdb,ABSPATH,$private,$owner,rtrim((string)get_option('home'),'/'),true))->adminCleanup($id);
         }catch(\Throwable $e){
-            // Only validation text reaches the administrator; internal failures never expose paths or SQL.
-            wp_die(esc_html($e instanceof \InvalidArgumentException||$e instanceof \RuntimeException?preg_replace('~(?:/[^\s/]+){2,}/?~','[path]',$e->getMessage()):'Backup cleanup failed.'));
+            // Only plugin-authored text reaches the administrator; internal failures never expose paths or SQL.
+            require_once __DIR__.'/TransferImport.php';
+            wp_die(esc_html(TransferImport::authored($e)?TransferImport::safeError($e)['message']:'Backup cleanup failed.'));
         }
         wp_safe_redirect(admin_url('tools.php?page=zoer-connect&zoer_cleanup=1'));exit;
     }

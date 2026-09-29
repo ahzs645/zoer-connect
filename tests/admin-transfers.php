@@ -49,4 +49,11 @@ try{
  $_POST=['_wpnonce'=>'fixture:zoer_import_cleanup','import_id'=>$active];
  check(outcome([TransferAdmin::class,'cleanup'])===($supported?'error:Only completed, rolled back or cancelled imports can be cleaned up.':'error:Backup cleanup requires a newer Zoer Connect import engine.'),$supported?'active import cannot be cleaned up':'cleanup guarded before the import engine supports it');
  check(json_decode(file_get_contents($base.'/private/import-'.$active.'/state.json'),true)['phase']==='reading_database','refused cleanup leaves journals unchanged');
+ // After a key rotation the administrator still cleans up a journal owned by the earlier key generation.
+ $GLOBALS['wpdb']=(object)['prefix'=>'wp_'];$GLOBALS['fixtureOptions']['zoer_connect_connection']=['hash'=>str_repeat('a',64)];
+ $path=$base.'/private/import-'.$done.'/state.json';file_put_contents($path,json_encode(json_decode(file_get_contents($path),true)+['tables'=>[],'artifacts'=>[],'cursor'=>0,'sourceUrl'=>'https://source.example']));
+ // Cleanup conservatively refuses while any journal is unreadable; drop the malformed fixture first.
+ unlink($base.'/private/import-'.str_repeat('d',32).'/state.json');rmdir($base.'/private/import-'.str_repeat('d',32));
+ $_POST=['_wpnonce'=>'fixture:zoer_import_cleanup','import_id'=>$done];
+ check(outcome([TransferAdmin::class,'cleanup'])==='redirect:/tools.php?page=zoer-connect&zoer_cleanup=1'&&json_decode(file_get_contents($path),true)['cleanedUp']===true&&json_decode(file_get_contents($path),true)['owner']===str_repeat('f',64),'administrator cleans up a journal from an earlier key generation');
 }finally{$it=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST);foreach($it as $f){if($f->isDir()&&!$f->isLink())rmdir($f->getPathname());else unlink($f->getPathname());}rmdir($base);}

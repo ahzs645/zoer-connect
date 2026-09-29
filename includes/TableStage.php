@@ -2,6 +2,8 @@
 namespace ZoerConnect;
 require_once __DIR__.'/RewriteRefresh.php';
 require_once __DIR__.'/CachePurge.php';
+require_once __DIR__.'/SettingsPreservation.php';
+require_once __DIR__.'/ImportError.php';
 
 /** Row staging for an explicitly selected existing InnoDB table.
  * Step methods require the caller to fence writers across requests. Synchronous
@@ -17,6 +19,7 @@ final class TableStage {
     private string $ledger;
     private string $lock;
     private ?string $create=null;
+    private ?bool $folded=null;
     public function __construct($db, string $table, string $id, bool $preserveOptions = false, ?array $source = null) {
         if (!preg_match('/^[a-f0-9]{16}$/D', $id) || !preg_match('/^[A-Za-z0-9_]{1,48}$/D', $table) || !str_starts_with($table, $db->prefix)) throw new \InvalidArgumentException('Invalid staging identity.');
         if (in_array($table, [$db->users, $db->usermeta], true)) throw new \InvalidArgumentException('Identity tables require a preservation policy.');
@@ -36,7 +39,8 @@ final class TableStage {
     public static function sourceSchema(string $sql, string $table): string {
         $head='CREATE TABLE `'.$table.'` (';
         if(!preg_match('/^[A-Za-z0-9_]{1,64}$/D',$table)||strlen($sql)>65536||!str_starts_with($sql,$head)||preg_match('/[\x00-\x09\x0b-\x1f\x7f]/',$sql))throw new \InvalidArgumentException('Unsupported source table schema.');
-        foreach([';','\\`','--','/*','#'] as $bad)if(str_contains($sql,$bad))throw new \InvalidArgumentException('Unsupported source table schema.');
+        // Any backslash is refused: its meaning depends on NO_BACKSLASH_ESCAPES.
+        foreach([';','\\','--','/*','#'] as $bad)if(str_contains($sql,$bad))throw new \InvalidArgumentException('Unsupported source table schema.');
         // Keywords are checked outside quoted identifiers and string literals so
         // that quoting cannot hide clauses; an unterminated quote is refused.
         $code='';$n=strlen($sql);
@@ -57,7 +61,13 @@ final class TableStage {
     }
     private function created(): bool { return $this->db->get_var("SELECT phase FROM `{$this->ledger}` WHERE sequence_id=-4")==='created'; }
     private function q(string $sql) { $r=$this->db->query($sql); if($r===false)throw new \RuntimeException('Database operation failed.'); return $r; }
-    private function exists(string $table): bool { return $this->db->get_var($this->db->prepare('SHOW TABLES LIKE %s', $this->db->esc_like($table)))===$table; }
+    /** With lower_case_table_names 1/2 the server may report a mixed-case name folded. */
+    private function exists(string $table): bool {
+        $name=$this->db->get_var($this->db->prepare('SHOW TABLES LIKE %s', $this->db->esc_like($table)));
+        if($name===$table||!is_string($name))return $name===$table;
+        $this->folded??=(string)$this->db->get_var('SELECT @@lower_case_table_names')!=='0';
+        return $this->folded&&strcasecmp($name,$table)===0;
+    }
     /** Regenerated caches and WordPress's untouched editor placeholder are not
      * published content. Saved drafts, autosaves, and any authored field remain
      * guarded. Post metadata is independently verified by the global preflight.
@@ -171,7 +181,7 @@ final class TableStage {
             }
             if(!$this->exists($this->stage))$this->q($this->create??"CREATE TABLE `{$this->stage}` LIKE `{$this->live}`");
             if($this->created()){
-                if($this->exists($this->live))throw new \RuntimeException('Destination changed since preparation.');
+                if($this->exists($this->live))throw new StageChanged('Destination changed since preparation.');
                 $this->q("INSERT INTO `{$this->ledger}` (sequence_id,digest,row_count,phase) VALUES (-2, '', 0, 'absent') ON DUPLICATE KEY UPDATE phase=VALUES(phase)");
                 $this->q("UPDATE `{$this->ledger}` SET phase='uploading' WHERE sequence_id=-1");
                 return true;
@@ -271,11 +281,11 @@ final class TableStage {
             if($phase!=='verified')throw new \RuntimeException('Not verified.');
             $content=$this->fingerprintStep($this->stage,-12);
             if($content===null)return false;
-            if($content['digest']!==$this->db->get_var("SELECT digest FROM `{$this->ledger}` WHERE sequence_id=-1")){$this->clearFingerprints([-12,-13]);throw new \RuntimeException('Verified stage changed.');}
-            if($this->created()){if($this->exists($this->live))throw new \RuntimeException('Destination changed since preparation.');return true;}
+            if($content['digest']!==$this->db->get_var("SELECT digest FROM `{$this->ledger}` WHERE sequence_id=-1")){$this->clearFingerprints([-12,-13]);throw new StageChanged('Verified stage changed.');}
+            if($this->created()){if($this->exists($this->live))throw new StageChanged('Destination changed since preparation.');return true;}
             $original=$this->fingerprintStep($this->live,-13);
             if($original===null)return false;
-            if($original['digest']!==$this->db->get_var("SELECT digest FROM `{$this->ledger}` WHERE sequence_id=-2")){$this->clearFingerprints([-12,-13]);throw new \RuntimeException('Destination changed since preparation.');}
+            if($original['digest']!==$this->db->get_var("SELECT digest FROM `{$this->ledger}` WHERE sequence_id=-2")){$this->clearFingerprints([-12,-13]);throw new StageChanged('Destination changed since preparation.');}
             return true;
         });
     }
@@ -290,7 +300,7 @@ final class TableStage {
                 if($this->exists($this->stage)&&!$this->exists($this->live)){
                     $content=$this->fingerprintStep($this->stage,-12);
                     if($content===null)return false;
-                    if($content['digest']!==$this->db->get_var("SELECT digest FROM `{$this->ledger}` WHERE sequence_id=-1")){$this->clearFingerprints([-12]);throw new \RuntimeException('Verified stage changed.');}
+                    if($content['digest']!==$this->db->get_var("SELECT digest FROM `{$this->ledger}` WHERE sequence_id=-1")){$this->clearFingerprints([-12]);throw new StageChanged('Verified stage changed.');}
                     $this->q("UPDATE `{$this->ledger}` SET phase='swapping' WHERE sequence_id=-1");
                     $this->q("RENAME TABLE `{$this->stage}` TO `{$this->live}`");
                 }elseif($phase!=='swapping'||$this->exists($this->stage)||!$this->exists($this->live))throw new \RuntimeException($this->exists($this->live)?'Destination changed since preparation.':'Ambiguous cutover.');
@@ -300,17 +310,39 @@ final class TableStage {
             if($this->exists($this->stage)&&!$this->exists($this->backup)){
                 $content=$this->fingerprintStep($this->stage,-12);
                 if($content===null)return false;
-                if($content['digest']!==$this->db->get_var("SELECT digest FROM `{$this->ledger}` WHERE sequence_id=-1")){$this->clearFingerprints([-12,-13]);throw new \RuntimeException('Verified stage changed.');}
+                if($content['digest']!==$this->db->get_var("SELECT digest FROM `{$this->ledger}` WHERE sequence_id=-1")){$this->clearFingerprints([-12,-13]);throw new StageChanged('Verified stage changed.');}
                 $original=$this->fingerprintStep($this->live,-13);
                 if($original===null)return false;
-                if($original['digest']!==$this->db->get_var("SELECT digest FROM `{$this->ledger}` WHERE sequence_id=-2")){$this->clearFingerprints([-12,-13]);throw new \RuntimeException('Destination changed since preparation.');}
+                if($original['digest']!==$this->db->get_var("SELECT digest FROM `{$this->ledger}` WHERE sequence_id=-2")){$this->clearFingerprints([-12,-13]);throw new StageChanged('Destination changed since preparation.');}
             }
             $this->q("UPDATE `{$this->ledger}` SET phase='swapping' WHERE sequence_id=-1");
-            if($this->exists($this->stage)&&!$this->exists($this->backup))$this->q("RENAME TABLE `{$this->live}` TO `{$this->backup}`, `{$this->stage}` TO `{$this->live}`");
+            if($this->exists($this->stage)&&!$this->exists($this->backup)){
+                if($this->live===$this->db->options)$this->runtimeOptions();
+                $this->q("RENAME TABLE `{$this->live}` TO `{$this->backup}`, `{$this->stage}` TO `{$this->live}`");
+            }
             elseif(!$this->exists($this->backup)||$this->exists($this->stage)||!$this->exists($this->live))throw new \RuntimeException('Ambiguous cutover.');
             $this->q("UPDATE `{$this->ledger}` SET phase='activated' WHERE sequence_id=-1");
             return true;
         });
+    }
+    /** Destination runtime state (cron, maintenance markers) keeps changing while an
+     * activation-fence import stages live. Under the writer fence, copy the CURRENT
+     * rows, including absence, into the stage just before the swap. These rows are
+     * ephemeral in every fingerprint; repeating after a crash copies the same rows.
+     */
+    private function runtimeOptions(): void {
+        $in="option_name IN ('".implode("','",SettingsPreservation::RUNTIME)."')";
+        $this->q('START TRANSACTION');
+        try{
+            $this->q("DELETE FROM `{$this->stage}` WHERE $in");
+            $this->q("INSERT INTO `{$this->stage}` (option_name,option_value,autoload) SELECT option_name,option_value,autoload FROM `{$this->live}` WHERE $in");
+            $this->q('COMMIT');
+        }catch(\Throwable $e){$this->q('ROLLBACK');throw $e;}
+    }
+    /** Discard activation-check fingerprints taken without the writer fence, so the
+     * fenced check (and activateStep, which reuses it) fingerprints again. */
+    public function resetActivationCheck(): void {
+        $this->locked(function(){if($this->exists($this->ledger))$this->clearFingerprints([-12,-13]);});
     }
     /** Reset when starting a new rollback fence/preflight attempt. Never between
      * a successful global preflight and its swaps under the same writer fence.
