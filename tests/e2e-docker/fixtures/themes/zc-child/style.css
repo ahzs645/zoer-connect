@@ -1,0 +1,7 @@
+/*
+Theme Name: ZC Child (e2e fixture)
+Template: twentytwentyfive
+Version: 1.0.0
+Description: Child theme used to test active-theme export and theme activation inference.
+*/
+.zc-child-marker { outline: 1px dashed #c00; }

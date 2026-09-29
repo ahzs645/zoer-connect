@@ -65,7 +65,7 @@ Tools → Zoer Connect adds a **Transfers** list (recent imports from private st
 
 ## Verification and packaging
 
-Run `make test` for PHP lint and artifact-free suites. Connection form tests cover default Push, automatic shared setup, nonce/HTTPS/admin gates, setup failures, repeated submissions, permission preservation and revocation. They use a WordPress boundary fixture and do not replace real WordPress qualification. Real MariaDB/WordPress checks live under `tests/integration/`; run these only against an explicitly authorized disposable destination. Integration evidence is recorded under the parent Zoer repository's `output/ui-audit/`.
+Run `make test` for PHP lint and artifact-free suites. Connection form tests cover default Push, automatic shared setup, nonce/HTTPS/admin gates, setup failures, repeated submissions, permission preservation and revocation. They use a WordPress boundary fixture and do not replace real WordPress qualification. Real MariaDB/WordPress checks live under `tests/integration/`; run these only against an explicitly authorized disposable destination. `tests/e2e-docker/` runs the full API version 2 Pull/Push/replace/rollback lifecycle between two local Docker WordPress sites over HTTPS (MariaDB 11 or MySQL 8). Integration evidence is recorded under the parent Zoer repository's `output/ui-audit/`.
 
 After editing `WriteFence.php` or `RequestDrain.php`, run `python3 scripts/seal-runtime.py` before testing. Compiled source fingerprints prevent stale cached PHP code from certifying a new request-protection generation.
 

@@ -1,6 +1,7 @@
 <?php
 namespace ZoerConnect;
 require_once __DIR__.'/FileComparison.php';
+require_once __DIR__.'/FilePublication.php';
 
 /** One authenticated artifact, bounded I/O and durable cursors across requests.
  * The caller holds the destination writer fence through activation/recovery. */
@@ -59,7 +60,8 @@ final class ChunkedFilePublication {
         case 'backup_copy':if($this->copyBlock($target,$backup,$s['oldBytes'],$s['oldBlocks'],$s['offset']))$this->next($s,'backup_check');break;
         case 'backup_check':if($this->check($backup,$s['oldBytes'],$s['oldBlocks'],$s['offset'])){$this->next($s,'copy_new');$s['status']='applying';}break;
         case 'copy_new':
-            if(!is_dir(dirname($target))&&!mkdir(dirname($target),0755,true))throw new \RuntimeException('Cannot create folder.');
+            // Record the directories this file creates before creating them, so rollback removes them.
+            if(!is_dir(dirname($target))){$s['createdDirs']=array_values(array_unique([...($s['createdDirs']??[]),...FilePublication::missingDirectories($this->root,$a['path'])]));$this->save($s);if(!mkdir(dirname($target),0755,true)&&!is_dir(dirname($target)))throw new \RuntimeException('Cannot create folder.');}
             if($s['offset']===0&&disk_free_space(dirname($target))<$a['bytes']+67108864)throw new \RuntimeException('Insufficient destination space.');
             if($this->copyBlock($s['source'],$tmp,$a['bytes'],$a['chunkSha256'],$s['offset']))$this->next($s,'new_check');break;
         case 'new_check':if($this->check($tmp,$a['bytes'],$a['chunkSha256'],$s['offset']))$this->next($s,'old_check');break;
@@ -98,7 +100,7 @@ final class ChunkedFilePublication {
         $s=$this->read();if($s['status']==='rolled_back')return $s;$target=$this->target($s['file']['path']);$tmp=$target.'.zoer-tmp-'.$s['token'];$restore=$target.'.zoer-restore-'.$s['token'];
         if($s['status']!=='rolling_back'){
             if(!$this->preflight($s)){$this->save($s);return $s;}
-            if(!$s['activated']&&!in_array($s['phase'],['rename','applied_check','applied'],true)){$s['status']='rolled_back';if(is_file($tmp))unlink($tmp);$this->save($s);return $s;}
+            if(!$s['activated']&&!in_array($s['phase'],['rename','applied_check','applied'],true)){$s['status']='rolled_back';if(is_file($tmp))unlink($tmp);FilePublication::removeCreatedDirectories($this->root,$s['createdDirs']??[]);$this->save($s);return $s;}
             $s['status']='rolling_back';$this->next($s,'restore_copy');$this->save($s);
         }
         switch($s['phase']){
@@ -111,6 +113,6 @@ final class ChunkedFilePublication {
         case 'restored_check':if($this->check($target,$s['oldBytes'],$s['oldBlocks'],$s['offset']))$s['status']='rolled_back';break;
         default:throw new \RuntimeException('Unknown restore phase.');
         }
-        if($s['status']==='rolled_back'&&is_file($tmp))unlink($tmp);$this->save($s);return $s;
+        if($s['status']==='rolled_back'){if(is_file($tmp))unlink($tmp);FilePublication::removeCreatedDirectories($this->root,$s['createdDirs']??[]);}$this->save($s);return $s;
     });}
 }

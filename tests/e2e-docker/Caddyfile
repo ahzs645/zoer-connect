@@ -1,0 +1,14 @@
+{
+	local_certs
+	auto_https disable_redirects
+}
+
+source.test {
+	tls internal
+	reverse_proxy source:80
+}
+
+dest.test {
+	tls internal
+	reverse_proxy dest:80
+}

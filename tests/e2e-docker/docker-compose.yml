@@ -1,0 +1,84 @@
+# Local two-site Zoer Connect fixture. Disposable: every credential here is a
+# test value for containers that only listen on 127.0.0.1.
+name: zoer-e2e
+
+x-wordpress: &wordpress
+  build: ./wp
+  image: zoer-e2e-wordpress:php8.3
+  depends_on:
+    db:
+      condition: service_healthy
+  environment: &wpenv
+    WORDPRESS_DB_HOST: db
+    WP_CLI_CACHE_DIR: /tmp/wp-cli-cache
+  networks: [zoer]
+
+services:
+  db:
+    image: ${DB_IMAGE:-mariadb:11.4}
+    environment:
+      MARIADB_ROOT_PASSWORD: zoer-e2e-root
+      MYSQL_ROOT_PASSWORD: zoer-e2e-root
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-zoer-e2e.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "(command -v mariadb-admin >/dev/null && mariadb-admin ping -uroot -pzoer-e2e-root --silent) || mysqladmin ping -uroot -pzoer-e2e-root --silent"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    networks: [zoer]
+
+  # Source: WordPress in the site root at a non-default filesystem path so that
+  # path replacement (sourcePath -> destination ABSPATH) is observable.
+  source:
+    <<: *wordpress
+    working_dir: /srv/source/public
+    environment:
+      <<: *wpenv
+      APACHE_DOCUMENT_ROOT: /srv/source/public
+      WORDPRESS_DB_NAME: source
+      WORDPRESS_DB_USER: source
+      WORDPRESS_DB_PASSWORD: source-e2e
+      WORDPRESS_TABLE_PREFIX: wp_
+      WORDPRESS_CONFIG_EXTRA: |
+        define('ZOER_CONNECT_STORAGE_DIR', '/srv/source/zoer-private');
+    volumes:
+      - ../../zoer-connect.php:/srv/source/public/wp-content/plugins/zoer-connect/zoer-connect.php:ro
+      - ../../includes:/srv/source/public/wp-content/plugins/zoer-connect/includes:ro
+      - ../../readme.txt:/srv/source/public/wp-content/plugins/zoer-connect/readme.txt:ro
+      - ./php:/zc:ro
+
+  # Destination: default image layout and a different table prefix.
+  dest:
+    <<: *wordpress
+    working_dir: /var/www/html
+    environment:
+      <<: *wpenv
+      APACHE_DOCUMENT_ROOT: /var/www/html
+      WORDPRESS_DB_NAME: dest
+      WORDPRESS_DB_USER: dest
+      WORDPRESS_DB_PASSWORD: dest-e2e
+      WORDPRESS_TABLE_PREFIX: wpd_
+      WORDPRESS_CONFIG_EXTRA: |
+        define('ZOER_CONNECT_STORAGE_DIR', '/var/www/zoer-private');
+    volumes:
+      - ../../zoer-connect.php:/var/www/html/wp-content/plugins/zoer-connect/zoer-connect.php:ro
+      - ../../includes:/var/www/html/wp-content/plugins/zoer-connect/includes:ro
+      - ../../readme.txt:/var/www/html/wp-content/plugins/zoer-connect/readme.txt:ro
+      - ./php:/zc:ro
+
+  # HTTPS for both sites with Caddy's internal CA. WordPress sees HTTPS through
+  # X-Forwarded-Proto (the official wp-config-docker.php honours it).
+  proxy:
+    image: caddy:2-alpine
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "127.0.0.1:${ZC_HTTPS_PORT:-8443}:443"
+    depends_on: [source, dest]
+    networks:
+      zoer:
+        aliases: [source.test, dest.test]
+
+networks:
+  zoer: {}

@@ -19,6 +19,25 @@ final class FilePublication {
         }
         return $cursor;
     }
+    /** Directories (relative to the root, deepest first) that publishing $relative
+     * creates. Recorded before mkdir so rollback can remove exactly those. */
+    public static function missingDirectories(string $root, string $relative): array {
+        $out=[];
+        for($dir=dirname($relative);$dir!=='.'&&$dir!=='wp-content'&&$dir!=='/'&&!is_dir($root.'/'.$dir);$dir=dirname($dir))$out[]=$dir;
+        return $out;
+    }
+    /** After a created file is removed, remove the directories its publication created
+     * once they are empty again (deepest first). Links, non-empty directories (later
+     * content) and anything outside themes/plugins/uploads are left untouched. */
+    public static function removeCreatedDirectories(string $root, array $dirs): void {
+        foreach($dirs as $dir){
+            if(!is_string($dir)||!preg_match('~^wp-content/(?:themes|plugins|uploads)(?:/[^/]+)*$~D',$dir)||in_array('..',explode('/',$dir),true))continue;
+            $path=$root.'/'.$dir;clearstatcache(true,$path);
+            if(is_link($path)||!is_dir($path))continue;
+            $entries=scandir($path);
+            if($entries!==false&&!array_diff($entries,['.','..']))@rmdir($path);
+        }
+    }
     private function write(array $state): void {
         $json=json_encode($state,JSON_THROW_ON_ERROR);
         $tmp=$this->private.'/publication.tmp';
@@ -72,7 +91,9 @@ final class FilePublication {
                 $actual=is_file($target)?hash_file('sha256',$target):null;
                 if($actual!==$e['oldHash'] && !($e['phase']==='applying' && $actual===$e['sha256'])) throw new \RuntimeException('Destination changed; refusing overwrite.');
                 if(hash_file('sha256',$e['source'])!==$e['sha256']) throw new \RuntimeException('Staged source changed.');
-                $s['entries'][$i]['phase']='applying'; $this->write($s);
+                $s['entries'][$i]['phase']='applying';
+                if(!is_dir(dirname($target)))$s['entries'][$i]['createdDirs']=array_values(array_unique([...($e['createdDirs']??[]),...self::missingDirectories($this->root,$e['path'])]));
+                $this->write($s);
                 if(!is_dir(dirname($target)) && !mkdir(dirname($target),0755,true)) throw new \RuntimeException('Cannot create destination folder.');
                 $tmp=$target.'.zoer-tmp-'.bin2hex(random_bytes(8));
                 try {
@@ -107,7 +128,7 @@ final class FilePublication {
             if(in_array($e['phase'],['applying','applied'],true)) {
                 $actual=is_file($target)?hash_file('sha256',$target):null;
                 if($actual!==$e['sha256'] && $actual!==$e['oldHash']) throw new \RuntimeException('Destination edited after publication; refusing rollback overwrite.');
-                if($e['oldHash']===null) { if(is_file($target) && !unlink($target)) throw new \RuntimeException('Cannot restore absent file.'); }
+                if($e['oldHash']===null) { if(is_file($target) && !unlink($target)) throw new \RuntimeException('Cannot restore absent file.'); self::removeCreatedDirectories($this->root,$e['createdDirs']??[]); }
                 else {
                     $backup=$this->private.'/backup-'.$i;
                     if(!is_file($backup) || hash_file('sha256',$backup)!==$e['oldHash']) throw new \RuntimeException('Backup corrupt.');

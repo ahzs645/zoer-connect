@@ -24,6 +24,7 @@ test: lint
 	php tests/publication.php
 	php tests/chunked-publication.php
 	php tests/chunked-failures.php
+	php tests/created-directories.php
 	php tests/peer-import.php
 	php tests/snapshot-stream.php
 	php tests/github-updater.php
