@@ -15,26 +15,28 @@ final class PagedExport {
     private function save(array $j):void{$d=$this->dir($j['id']);$bytes=json_encode($j,JSON_THROW_ON_ERROR);if(file_put_contents($d.'/state.tmp',$bytes)!==strlen($bytes)||!rename($d.'/state.tmp',$d.'/state.json'))throw new \RuntimeException('Cannot save export.');chmod($d.'/state.json',0600);}
     private function touch(array &$j):void{$j['expiresAt']=min($j['createdAt']+86400,time()+3600);}
     private function view(array $j):array{return ['id'=>$j['id'],'status'=>$j['status'],'phase'=>$j['phase'],'fileCount'=>count($j['files']),'bytes'=>$j['bytes'],'expiresAt'=>$j['expiresAt'],'source'=>$j['source'],'maxChunkBytes'=>262144,'paged'=>true];}
-    public function create(array $input,array $source):array{return $this->locked(function()use($input,$source){
-        if(array_diff(array_keys($input),['clientId','profile','database'])||!is_bool($input['database']??null)||!is_array($input['profile']??null))throw new \InvalidArgumentException('Export selection required.');
-        $id=$input['clientId']??'';$d=$this->dir($id);$profile=ExportProfile::normalize($input['profile']);$hash=hash('sha256',json_encode([$profile,$input['database']],JSON_THROW_ON_ERROR));
+    public function create(array $input,array $source,array $active=[]):array{return $this->locked(function()use($input,$source,$active){
+        if(array_diff(array_keys($input),['clientId','profile','database'])||!array_key_exists('database',$input)||!is_array($input['profile']??null))throw new \InvalidArgumentException('Export selection required.');
+        $selection=DatabaseExporter::selection($input['database']);$wantsDatabase=$selection!==false;
+        $id=$input['clientId']??'';$d=$this->dir($id);$profile=ExportProfile::normalize($input['profile']);$hash=hash('sha256',json_encode([$profile,$selection],JSON_THROW_ON_ERROR));
         if(is_dir($d)){$j=$this->read($id);if(!hash_equals($hash,$j['requestHash']))throw new \InvalidArgumentException('Export selections changed.');return $this->view($j);}
         foreach(glob($this->root.'/*',GLOB_ONLYDIR)?:[] as $old){if(is_link($old)||!preg_match('/^[a-f0-9]{32}$/D',basename($old)))continue;$j=json_decode((string)@file_get_contents($old.'/state.json'),true);if(($j['expiresAt']??filemtime($old)+3600)<=time())$this->remove(basename($old));}
         if(count(glob($this->root.'/*',GLOB_ONLYDIR)?:[])>=2)throw new \RuntimeException('Cancel an existing export before starting another.');
-        $queue=[];foreach(['themes'=>'wp-content/themes','plugins'=>'wp-content/plugins','media'=>'wp-content/uploads','muplugins'=>'wp-content/mu-plugins'] as $k=>$p)if($profile[$k])$queue[]=$p;
         if($profile['core'])throw new \InvalidArgumentException('Paged exports currently support content resources only.');
-        if(!$queue&&!$input['database'])throw new \InvalidArgumentException('Select at least one resource.');
+        // Theme/plugin modes resolve to item roots once, so later steps traverse a fixed selection.
+        $queue=FileExporter::roots($this->sourceRoot,$profile,$active);
+        if(!$queue&&!$wantsDatabase)throw new \InvalidArgumentException('Select at least one resource.');
         if(!mkdir($d,0700))throw new \RuntimeException('Cannot reserve export.');
-        $j=['id'=>$id,'owner'=>$this->owner,'requestHash'=>$hash,'source'=>$source,'profile'=>$profile,'database'=>$input['database'],'status'=>'preparing','phase'=>$input['database']?'database':'files','queue'=>$queue,'files'=>[],'bytes'=>0,'createdAt'=>time(),'expiresAt'=>time()+3600];$this->save($j);return $this->view($j);
+        $j=['id'=>$id,'owner'=>$this->owner,'requestHash'=>$hash,'source'=>$source+['tables'=>[]],'profile'=>$profile,'database'=>$selection,'status'=>'preparing','phase'=>$wantsDatabase?'database':'files','queue'=>$queue,'files'=>[],'bytes'=>0,'createdAt'=>time(),'expiresAt'=>time()+3600];$this->save($j);return $this->view($j);
     });}
     public function step(string $id,callable $database):array{return $this->locked(function()use($id,$database){
         $j=$this->read($id);if($j['status']==='ready')return $this->view($j);$d=$this->dir($id);
         if($j['phase']==='database'){
             foreach(['0.bin','0.bin.partial'] as $name){$p=$d.'/'.$name;if(is_link($p))throw new \RuntimeException('Unsafe snapshot.');if(is_file($p))unlink($p);}
-            $database($d.'/0.bin');$size=filesize($d.'/0.bin');if($size<1||$size>DatabaseExporter::MAX_BYTES)throw new \RuntimeException('Invalid database snapshot.');
+            $tables=$database($d.'/0.bin',is_array($j['database'])?$j['database']:[]);clearstatcache();$size=filesize($d.'/0.bin');if(is_array($tables))$j['source']['tables']=array_values($tables);if($size<1||$size>DatabaseExporter::MAX_BYTES)throw new \RuntimeException('Invalid database snapshot.');
             $j['files'][]=['path'=>'database.sql','bytes'=>$size,'sha256'=>hash_file('sha256',$d.'/0.bin')];$j['bytes']=$size;$j['phase']='files';$this->touch($j);$this->save($j);return $this->view($j);
         }
-        $start=microtime(true);$root=realpath($this->sourceRoot);$count=0;
+        $start=microtime(true);$root=realpath($this->sourceRoot);$count=0;$since=ExportProfile::mediaSince($j['profile']);
         while($j['queue']&&$count++<250&&microtime(true)-$start<4){
             $relative=array_pop($j['queue']);Selection::path($relative);
             if($relative==='wp-content/plugins/zoer-connect'||str_starts_with($relative,'wp-content/plugins/zoer-connect/'))continue;
@@ -44,6 +46,7 @@ final class PagedExport {
             for($parent=dirname($path);$parent!==$root;$parent=dirname($parent))if(is_link($parent))throw new \RuntimeException('Symlink source rejected.');
             if(is_dir($path)){$children=scandir($path);if($children===false||count($children)+count($j['queue'])>120000)throw new \RuntimeException('Too many selected files.');foreach(array_reverse($children) as $name)if($name!=='.'&&$name!=='..')$j['queue'][]=$relative.'/'.$name;continue;}
             if(!is_file($path))throw new \RuntimeException('Unsafe source file.');
+            if($since!==null&&str_starts_with($relative,'wp-content/uploads/')&&filemtime($path)<$since)continue;
             $size=filesize($path);if($size>33554432)throw new \RuntimeException('A selected file exceeds the current 32 MiB export limit.');
             if(count($j['files'])>=100000||$j['bytes']+$size>4*1073741824)throw new \RuntimeException('Paged export exceeds its file or byte limit.');
             if(disk_free_space($d)<$size+67108864)throw new \RuntimeException('Insufficient private export storage.');

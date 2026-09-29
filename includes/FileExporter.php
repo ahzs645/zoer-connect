@@ -1,18 +1,38 @@
 <?php
 namespace ZoerConnect;
 final class FileExporter {
-    public static function plan(string $root,array $profile): array {
+    /** Content roots to traverse. Theme/plugin modes resolve against a trusted top-level scan of the source;
+     * $active lists active theme slugs (stylesheet and template) and plugin slugs (directory or single file). */
+    public static function roots(string $root,array $profile,array $active=[]): array {
+        $roots=[];
+        foreach(['themes'=>'wp-content/themes','plugins'=>'wp-content/plugins','media'=>'wp-content/uploads','muplugins'=>'wp-content/mu-plugins'] as $key=>$path){
+            if(!$profile[$key])continue;
+            $mode=$profile[$key.'Mode']??'all';
+            if($mode==='all'){$roots[]=$path;continue;}
+            $dir=rtrim($root,'/').'/'.$path;if(!file_exists($dir)&&!is_link($dir))continue;
+            if(is_link($dir)||!is_dir($dir))throw new \RuntimeException('Unsafe source directory.');
+            $names=scandir($dir);if($names===false)throw new \RuntimeException('Unsafe source directory.');
+            $inventory=[];foreach($names as $name)if($name!=='.'&&$name!=='..')$inventory[]=['id'=>$name,'active'=>in_array($name,$active[$key]??[],true)];
+            $items=$profile[$key.'Items']??[];
+            // Excluding a resource that no longer exists is harmless; selecting one is refused.
+            if($mode==='except')$items=array_values(array_intersect($items,array_column($inventory,'id')));
+            foreach(Selection::resources($inventory,$mode,$items) as $item)$roots[]=$path.'/'.$item['id'];
+        }
+        if($profile['core']){$roots[]='wp-admin';$roots[]='wp-includes';}
+        return $roots;
+    }
+    public static function plan(string $root,array $profile,array $active=[]): array {
         $profile=ExportProfile::normalize($profile);$root=realpath($root);
         if(!$root)throw new \RuntimeException('Source missing.');
-        $roots=[];foreach(['themes'=>'wp-content/themes','plugins'=>'wp-content/plugins','media'=>'wp-content/uploads','muplugins'=>'wp-content/mu-plugins'] as $key=>$path)if($profile[$key])$roots[]=$path;
-        if($profile['core']){$roots[]='wp-admin';$roots[]='wp-includes';}
+        $roots=self::roots($root,$profile,$active);$since=ExportProfile::mediaSince($profile);
         $files=[];
-        $add=static function(string $path)use(&$files,$root,$profile){
+        $add=static function(string $path)use(&$files,$root,$profile,$since){
             Selection::path($path);
             if(str_starts_with($path,'wp-content/plugins/zoer-connect/'))return;
             if(Selection::excluded($path,['**/.git/','**/node_modules/','**/.env','**/.env.*','**/*.log',...$profile['excludes']]))return;
             $full=$root.'/'.$path;$real=realpath($full);
             if(is_link($full)||!$real||!str_starts_with($real,$root.'/')||!is_file($real))throw new \RuntimeException('Unsafe source file.');
+            if($since!==null&&str_starts_with($path,'wp-content/uploads/')&&filemtime($real)<$since)return;
             $bytes=filesize($real);
             if($bytes>33554432)throw new \RuntimeException('A selected file exceeds the current 32 MiB export limit.');
             $files[]=['path'=>$path,'bytes'=>$bytes,'sha256'=>hash_file('sha256',$real)];
@@ -20,6 +40,8 @@ final class FileExporter {
         };
         foreach($roots as $relative){
             $dir=$root.'/'.$relative;if(!file_exists($dir))continue;
+            // A selected single-file plugin is a file root.
+            if(!is_link($dir)&&is_file($dir)&&substr_count($relative,'/')===2){$add($relative);continue;}
             if(is_link($dir)||!is_dir($dir))throw new \RuntimeException('Unsafe source directory.');
             $walk=new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir,\FilesystemIterator::SKIP_DOTS));
             foreach($walk as $entry){if($entry->isLink())throw new \RuntimeException('Symlink source rejected.');if($entry->isFile())$add(substr($entry->getPathname(),strlen($root)+1));}
@@ -28,8 +50,8 @@ final class FileExporter {
         usort($files,static fn($a,$b)=>strcmp($a['path'],$b['path']));
         return ['version'=>1,'kind'=>'file-export','profile'=>$profile,'files'=>$files,'bytes'=>array_sum(array_column($files,'bytes'))];
     }
-    public static function zip(string $root,array $plan,string $destination): void {
-        $verified=self::plan($root,$plan['profile']);
+    public static function zip(string $root,array $plan,string $destination,array $active=[]): void {
+        $verified=self::plan($root,$plan['profile'],$active);
         if($verified!==$plan)throw new \RuntimeException('Source changed since review.');
         if($plan['bytes']>536870912)throw new \RuntimeException('Selected export exceeds 512 MiB.');
         $zip=new \ZipArchive();if($zip->open($destination,\ZipArchive::CREATE|\ZipArchive::OVERWRITE)!==true)throw new \RuntimeException('Cannot create export.');

@@ -12,9 +12,12 @@ test: lint
 	php tests/file-comparison.php
 	php tests/selection.php
 	php tests/export.php
+	php tests/export-modes.php
 	php tests/remote-export.php
 	php tests/paged-export.php
 	php tests/database-export.php
+	php tests/database-filters.php
+	php tests/diagnostics.php
 	php tests/related-replacement.php
 	php tests/coordinator.php
 	php tests/publication.php
@@ -33,6 +36,7 @@ test: lint
 	php tests/transfer-import-blocks.php
 	php tests/table-stage.php
 	php tests/import-admin.php
+	php tests/admin-transfers.php
 	php tests/request-drain.php
 
 # Run only after integration release checks pass; this target creates release ZIPs.

@@ -1,5 +1,5 @@
 <?php
-foreach(['StageStore','Selection','ExportProfile','DatabaseExporter','PagedExport'] as $c)require __DIR__.'/../includes/'.$c.'.php';
+foreach(['StageStore','Selection','ExportProfile','FileExporter','DatabaseExporter','PagedExport'] as $c)require __DIR__.'/../includes/'.$c.'.php';
 function check($v,$s){if(!$v)throw new RuntimeException($s);echo "PASS $s\n";}
 function denied($f,$s){try{$f();}catch(Throwable $e){check(true,$s);return;}throw new RuntimeException($s);}
 $r=sys_get_temp_dir().'/zc-paged-'.bin2hex(random_bytes(6));mkdir($r);mkdir($r.'/public');mkdir($r.'/public/wp-content',0700);mkdir($r.'/public/wp-content/themes',0700);mkdir($r.'/public/wp-content/themes/test',0700);
