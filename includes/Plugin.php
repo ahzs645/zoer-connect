@@ -7,6 +7,8 @@ final class Plugin {
     public static function boot(): void {
         add_action('application_password_did_authenticate', static function () { self::$applicationPassword = true; });
         add_action('wp_loaded', [RewriteRefresh::class, 'run']);
+        require_once __DIR__.'/CachePurge.php';
+        add_action('wp_loaded', [CachePurge::class, 'run']);
         add_action('rest_api_init', [self::class, 'routes']);
         add_action('admin_menu', static function () {
             add_management_page('Zoer Connect', 'Zoer Connect', 'manage_options', 'zoer-connect', [self::class, 'admin']);
@@ -105,13 +107,15 @@ final class Plugin {
         $caps=$wpdb->get_var($wpdb->prepare("SELECT meta_value FROM `{$wpdb->usermeta}` WHERE user_id=%d AND meta_key=%s",$owner,$wpdb->prefix.'capabilities'));
         $caps=is_string($caps)?@unserialize($caps,['allowed_classes'=>false]):null;
         if(!is_array($caps)||($caps['administrator']??false)!==true||!$wpdb->get_var($wpdb->prepare("SELECT ID FROM `{$wpdb->users}` WHERE ID=%d",$owner)))return $fail(401,'The connection owner must remain an administrator.');
-        if(!preg_match('~^/zoer-connect/v1/imports(?:/([a-f0-9]{32})(?:/(chunks|step|rollback|finish))?)?$~D',$route,$m))return $fail(404,'Unknown import operation.');
+        if(!preg_match('~^/zoer-connect/v1/imports(?:/([a-f0-9]{32})(?:/(chunks|step|rollback|finish|pause|resume|approve|cleanup))?)?$~D',$route,$m))return $fail(404,'Unknown import operation.');
+        $import=null;$id=$m[1]??null;
         try {
             self::store();
             $root=self::storageRoot();
             $target=rtrim((string)$wpdb->get_var($wpdb->prepare("SELECT option_value FROM `{$wpdb->options}` WHERE option_name=%s",'home')),'/');
             $import=new TransferImport($wpdb,ABSPATH,$root,$record['hash'],$target,true);
-            $method=$_SERVER['REQUEST_METHOD']??'GET';$id=$m[1]??null;$action=$m[2]??null;
+            $method=$_SERVER['REQUEST_METHOD']??'GET';$action=$m[2]??null;
+            if($method==='GET'&&!$id)return $import->list();
             if($method==='GET'&&$id&&!$action)return $import->status($id);
             if($method!=='POST')return $fail(405,'Unsupported import method.');
             $raw=file_get_contents('php://input',false,null,0,2097153);
@@ -124,10 +128,13 @@ final class Plugin {
                 $data=base64_decode($body['data'],true);if($data===false)return $fail(400,'Invalid chunk encoding.');
                 return $import->chunk($id,$body['index'],$body['offset'],$data);
             }
-            if(in_array($action,['step','rollback','finish'],true))return $import->$action($id);
+            if(in_array($action,['step','rollback','finish','pause','resume','approve','cleanup'],true))return $import->$action($id);
             return $fail(404,'Unknown import operation.');
-        }catch(\InvalidArgumentException $e){return $fail(400,'Import input failed validation.');}
-        catch(\Throwable $e){return $fail(409,'Import could not advance. Retry or roll back using the same connection.');}
+        }catch(\Throwable $e){
+            // Safe text only: our own exception messages with paths stripped.
+            http_response_code($e instanceof \InvalidArgumentException?400:409);
+            return TransferImport::safeError($e,$import&&$id?$import->phase($id):null);
+        }
     }
     public static function routes(): void {
         $register = static function ($path, $method, $handler) {
@@ -160,7 +167,7 @@ final class Plugin {
                 },
             ]);
         };
-        foreach(['/imports','/imports/(?P<id>[a-f0-9]{32})','/imports/(?P<id>[a-f0-9]{32})/(?P<action>chunks|step|rollback|finish)'] as $path) {
+        foreach(['/imports','/imports/(?P<id>[a-f0-9]{32})','/imports/(?P<id>[a-f0-9]{32})/(?P<action>chunks|step|rollback|finish|pause|resume|approve|cleanup)'] as $path) {
             register_rest_route('zoer-connect/v1',$path,['methods'=>'GET,POST','permission_callback'=>'__return_true','callback'=>static function($r){
                 $result=self::earlyImportRecovery($r->get_route());$status=http_response_code();return new \WP_REST_Response($result,$status>=400?$status:200,['Cache-Control'=>'no-store']);
             }]);

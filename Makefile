@@ -19,6 +19,7 @@ test: lint
 	php tests/database-filters.php
 	php tests/diagnostics.php
 	php tests/related-replacement.php
+	php tests/replacement-rules.php
 	php tests/coordinator.php
 	php tests/publication.php
 	php tests/chunked-publication.php
@@ -27,6 +28,7 @@ test: lint
 	php tests/snapshot-stream.php
 	php tests/github-updater.php
 	php tests/rewrite-refresh.php
+	php tests/cache-purge.php
 	php tests/write-fence.php
 	php tests/cache-compatibility.php
 	php -d disable_functions=link tests/cache-compatibility.php
@@ -35,6 +37,9 @@ test: lint
 	php -d disable_functions=link tests/transfer-import.php
 	php tests/transfer-import-blocks.php
 	php tests/table-stage.php
+	php tests/table-create.php
+	php tests/import-options.php
+	php tests/replace-kind.php
 	php tests/import-admin.php
 	php tests/admin-transfers.php
 	php tests/request-drain.php

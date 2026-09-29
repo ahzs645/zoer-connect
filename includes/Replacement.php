@@ -1,37 +1,110 @@
 <?php
 namespace ZoerConnect;
-/** Conservative replacements: objects/references are refused, never instantiated. */
+/** Conservative replacements: objects/references are refused, never instantiated.
+ * Rules marked atomic (generated URL/path rules) run as ONE left-to-right pass,
+ * longest match first, so a destination containing a source never re-matches.
+ */
 final class Replacement {
-    public static function apply(string $value,array $rules): string {
-        if(strlen($value)>1048576||count($rules)>50)throw new \InvalidArgumentException('Replacement limit exceeded.');
-        foreach($rules as $r)if(!is_array($r)||!is_string($r['find']??null)||$r['find']===''||!is_string($r['replace']??null)||!in_array($r['mode']??null,['literal','regex'],true))throw new \InvalidArgumentException('Invalid replacement rule.');
+    public const MAX_VALUE = 16777216;
+    public const MAX_RULES = 250;
+    public static function apply(string $value,array $rules,?int &$count=null): string {
+        $count=0;
+        if(count($rules)>self::MAX_RULES)throw new \InvalidArgumentException('Replacement limit exceeded.');
+        foreach($rules as $r)if(!is_array($r)||!is_string($r['find']??null)||$r['find']===''||!is_string($r['replace']??null)||!in_array($r['mode']??null,['literal','regex'],true)||!is_bool($r['caseSensitive']??true)||(($r['atomic']??false)&&($r['mode']!=='literal'||!($r['caseSensitive']??true))))throw new \InvalidArgumentException('Invalid replacement rule.');
         // Unrelated serialized plugin state must survive byte-for-byte. Do not
         // deserialize objects (e.g. Action Scheduler schedules) to change nothing.
         $possible=false;
-        foreach($rules as $r)if($r['mode']==='regex'||str_contains($value,$r['find'])){$possible=true;break;}
+        foreach($rules as $r)if(self::matches($value,$r)){$possible=true;break;}
         if(!$possible)return $value;
-        return self::walk($value,$rules,0);
+        // Only values a rule can change are bounded; unrelated large values pass untouched.
+        if(strlen($value)>self::MAX_VALUE)throw new \InvalidArgumentException('Replacement limit exceeded.');
+        return self::walk($value,$rules,0,$count);
     }
-    private static function walk($value,array $rules,int $depth) {
+    private static function matches(string $value,array $r): bool {
+        if($r['mode']==='literal')return ($r['caseSensitive']??true)?str_contains($value,$r['find']):stripos($value,$r['find'])!==false;
+        // Arrays without objects are walked for anchored patterns; object payloads
+        // are only refused when the pattern can match their serialized bytes.
+        if(self::regex(static fn()=>@preg_match($r['find'],$value))===1)return true;
+        return (bool)preg_match('/^(?:a|s):/',$value)&&!preg_match('/(?:^|[;{}])(?:O|C|R|r):/',$value);
+    }
+    private static function regex(callable $fn) {
+        $old=ini_get('pcre.backtrack_limit');ini_set('pcre.backtrack_limit','100000');
+        try{$result=$fn();if($result===null||$result===false)throw new \RuntimeException('Regex failed or exceeded limits.');return $result;}
+        finally{ini_set('pcre.backtrack_limit',$old);}
+    }
+    private static function walk($value,array $rules,int $depth,int &$count) {
         if($depth>30)throw new \RuntimeException('Nested value limit exceeded.');
-        if(is_array($value)){ $out=[];foreach($value as $key=>$item)$out[$key]=self::walk($item,$rules,$depth+1);return $out; }
+        if(is_array($value)){ $out=[];foreach($value as $key=>$item)$out[$key]=self::walk($item,$rules,$depth+1,$count);return $out; }
         if(!is_string($value))return $value;
         if(preg_match('/^(?:a|s|i|b|d|O|C|R|r):|^N;$/',$value)){
             if(preg_match('/(?:^|[;{}])(?:O|C|R|r):/',$value))throw new \RuntimeException('Serialized objects and references are unsupported.');
             $decoded=@unserialize($value,['allowed_classes'=>false,'max_depth'=>32]);
             if($decoded===false&&$value!=='b:0;')throw new \RuntimeException('Malformed serialized value.');
-            return serialize(self::walk($decoded,$rules,$depth+1));
+            return serialize(self::walk($decoded,$rules,$depth+1,$count));
         }
-        foreach($rules as $r){
-            if($r['mode']==='literal')$value=str_replace($r['find'],$r['replace'],$value);
+        for($i=0,$n=count($rules);$i<$n;$i++){
+            $r=$rules[$i];$c=0;
+            if($r['atomic']??false){
+                $pairs=[];for(;$i<$n&&($rules[$i]['atomic']??false);$i++)if(!array_key_exists('k'.$rules[$i]['find'],$pairs))$pairs['k'.$rules[$i]['find']]=$rules[$i]['replace'];$i--;
+                $finds=array_map(static fn($k)=>substr($k,1),array_keys($pairs));
+                if(!array_filter($finds,static fn($f)=>str_contains($value,$f)))continue;
+                usort($finds,static fn($a,$b)=>strlen($b)<=>strlen($a));
+                $pattern='/'.implode('|',array_map(static fn($f)=>preg_quote($f,'/'),$finds)).'/';
+                $value=self::regex(static function()use($pattern,$pairs,$value,&$c){return preg_replace_callback($pattern,static fn($m)=>$pairs['k'.$m[0]],$value,-1,$c);});
+            }
+            elseif($r['mode']==='literal')$value=($r['caseSensitive']??true)?str_replace($r['find'],$r['replace'],$value,$c):str_ireplace($r['find'],$r['replace'],$value,$c);
             else{
                 if(strlen($r['find'])>500)throw new \InvalidArgumentException('Pattern too long.');
-                $old=ini_get('pcre.backtrack_limit');ini_set('pcre.backtrack_limit','100000');
-                try{$next=@preg_replace($r['find'],$r['replace'],$value);if($next===null)throw new \RuntimeException('Regex failed or exceeded limits.');$value=$next;}
-                finally{ini_set('pcre.backtrack_limit',$old);}
+                $value=self::regex(static function()use($r,$value,&$c){return @preg_replace($r['find'],$r['replace'],$value,-1,$c);});
             }
-            if(strlen($value)>1048576)throw new \RuntimeException('Replacement output too large.');
+            $count+=$c;
+            if(strlen($value)>self::MAX_VALUE)throw new \RuntimeException('Replacement output too large.');
         }
         return $value;
+    }
+    /** Validated client rows. Regex rows need delimiters; caseSensitive=false adds (?i). */
+    public static function custom($rows): array {
+        if($rows===null)return [];
+        if(!is_array($rows)||!array_is_list($rows)||count($rows)>50)throw new \InvalidArgumentException('Invalid custom replacements.');
+        $out=[];
+        foreach($rows as $row){
+            if(!is_array($row)||array_diff(array_keys($row),['find','replace','regex','caseSensitive'])||!is_string($row['find']??null)||$row['find']===''||strlen($row['find'])>4096||!is_string($row['replace']??null)||strlen($row['replace'])>4096||!is_bool($row['regex']??false)||!is_bool($row['caseSensitive']??true))throw new \InvalidArgumentException('Invalid custom replacement row.');
+            $regex=$row['regex']??false;$sensitive=$row['caseSensitive']??true;
+            if($regex&&(strlen($row['find'])>500||str_contains($row['find'],"\0")||@preg_match($row['find'],'')===false))throw new \InvalidArgumentException('Invalid custom replacement pattern.');
+            $out[]=['find'=>$row['find'],'replace'=>$row['replace'],'regex'=>$regex,'caseSensitive'=>$sensitive];
+        }
+        return $out;
+    }
+    /** Ordered rules: automatic URLs (longest first), variants, paths, then custom rows. */
+    public static function rules(array $urls,string $target,array $options,?string $sourcePath=null,?string $destinationPath=null): array {
+        $rules=[];$seen=[$target=>true];
+        $add=static function(string $find,string $replace,string $group)use(&$rules,&$seen){if($find===''||$find===$replace||isset($seen[$find]))return;$seen[$find]=true;$rules[]=['mode'=>'literal','find'=>$find,'replace'=>$replace,'atomic'=>true,'group'=>$group];};
+        $sources=[];
+        if($options['automatic']??true){
+            foreach($urls as $url)if(is_string($url)&&$url!=='')$sources[]=rtrim($url,'/');
+            $sources=array_values(array_unique($sources));
+            usort($sources,static fn($a,$b)=>strlen($b)<=>strlen($a));
+            foreach($sources as $find)$add($find,$target,'automatic');
+        }
+        if($sources&&($options['variants']??false)){
+            $twin=static fn($u)=>str_starts_with($u,'https://')?'http://'.substr($u,8):(str_starts_with($u,'http://')?'https://'.substr($u,7):$u);
+            $all=[];foreach($sources as $u){$all[]=$u;$all[]=$twin($u);}
+            foreach($all as $u)$add($u,$target,'variant');
+            foreach($all as $u)$add(str_replace('/','\\/',$u),str_replace('/','\\/',$target),'variant');
+            foreach($all as $u)$add(rawurlencode($u),rawurlencode($target),'variant');
+            $relative=static fn($u)=>preg_replace('~^https?:~','',$u);
+            foreach($sources as $u)$add($relative($u),$relative($target),'variant');
+        }
+        if(($options['paths']??false)&&is_string($sourcePath)&&is_string($destinationPath)){
+            $from=rtrim($sourcePath,'/');$to=rtrim($destinationPath,'/');
+            if(strlen($from)>1&&$to!==''){$add($from,$to,'path');$add(str_replace('/','\\/',$from),str_replace('/','\\/',$to),'path');}
+        }
+        foreach($options['custom']??[] as $row){
+            $find=$row['find'];
+            if($row['regex']&&!$row['caseSensitive'])$find=$find[0].'(?i)'.substr($find,1);
+            $rules[]=['mode'=>$row['regex']?'regex':'literal','find'=>$find,'replace'=>$row['replace'],'caseSensitive'=>$row['regex']?true:$row['caseSensitive'],'group'=>'custom'];
+        }
+        if(count($rules)>self::MAX_RULES)throw new \InvalidArgumentException('Replacement limit exceeded.');
+        return $rules;
     }
 }
