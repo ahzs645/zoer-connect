@@ -14,8 +14,8 @@ Destination home/siteurl, administrator accounts, roles, connector identity, sea
 
 ## Destination setup
 
-1. Install the plugin, pair its connector key with Zoer and enable Push.
-2. In Tools → Zoer Connect, select **Shared-hosting migration**, acknowledge replacement, then enable it. This installs the site-level MU protection and binds the setup to this site and protection code. It does not inspect shared PHP processes or require a hosting restart.
+1. From 0.3.14, generating a connection key enables **Push** and prepares **Shared-hosting migration** automatically. Pair that key with Zoer. Pull remains off until enabled. Older versions require enabling Push and shared-hosting migration manually.
+2. Automatic setup installs site-level MU protection and binds readiness to this site and protection code. It does not pause WordPress or publish content. Existing permissions, revoked access and advanced setup are preserved, including on key reset. If private storage or hosting compatibility prevents setup, the key remains available with an administrator error message; resolve the reported issue and save Push permissions to retry. Existing incomplete setups retain the manual recovery controls.
 3. In Zoer, test the connection, choose the local source and resources, prepare an export, confirm the destination address and replacement, then import.
 4. Finish to reopen the site; inspect pages and administrator access. Use the same connection to recover interruptions. Rollback retains conflict checks and refuses detected later edits.
 
@@ -53,7 +53,7 @@ Import requests are bounded to 2 MiB JSON; decoded upload blocks are 256 KiB. Jo
 
 ## Verification and packaging
 
-Run `make test` for PHP lint and artifact-free suites. Real MariaDB/WordPress checks live under `tests/integration/`; run these only against an explicitly authorized disposable destination. Integration evidence is recorded under the parent Zoer repository's `output/ui-audit/`.
+Run `make test` for PHP lint and artifact-free suites. Connection form tests cover default Push, automatic shared setup, nonce/HTTPS/admin gates, setup failures, repeated submissions, permission preservation and revocation. They use a WordPress boundary fixture and do not replace real WordPress qualification. Real MariaDB/WordPress checks live under `tests/integration/`; run these only against an explicitly authorized disposable destination. Integration evidence is recorded under the parent Zoer repository's `output/ui-audit/`.
 
 After editing `WriteFence.php` or `RequestDrain.php`, run `python3 scripts/seal-runtime.py` before testing. Compiled source fingerprints prevent stale cached PHP code from certifying a new request-protection generation.
 

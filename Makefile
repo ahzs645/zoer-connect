@@ -8,6 +8,7 @@ test: lint
 	php tests/run.php
 	php tests/storage.php
 	php tests/auth.php
+	php tests/connection-admin.php
 	php tests/file-comparison.php
 	php tests/selection.php
 	php tests/export.php

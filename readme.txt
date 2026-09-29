@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.3.13
+Stable tag: 0.3.14
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -10,7 +10,7 @@ Authenticated WordPress transfers and recovery for Zoer.
 == Description ==
 Connect WordPress to Zoer using a scoped connector key over HTTPS. Pull selected resources or push a verified export from a managed local DDEV source. Imports preserve destination URLs, administrator accounts and connector identity, stage matching database tables, and retain file/table backups for verified rollback.
 
-Imports require explicit destination setup in WordPress. Shared-hosting migration installs site-level MU request protection and records consent to replace selected content, without inspecting or restarting shared PHP workers. It keeps original tables and selected files for recovery. Concurrent live edits are not merged and may be overwritten; avoid editing during migration. Earlier requests and external writers are not guaranteed to be stopped. Detected conflicts can halt activation or prevent automatic rollback. Advanced verified-worker mode retains the stricter Linux worker checks.
+Generating a new connection key enables Push and automatically prepares shared-hosting migration. Pull stays off until enabled. Shared-hosting migration installs site-level MU request protection without inspecting or restarting shared PHP workers. Publishing still requires confirmation of selected content in Zoer. Existing permissions, revocations and advanced setup are preserved. It keeps original tables and selected files for recovery. Concurrent live edits are not merged and may be overwritten; avoid editing during migration. Earlier requests and external writers are not guaranteed to be stopped. Detected conflicts can halt activation or prevent automatic rollback. Advanced verified-worker mode retains the stricter Linux worker checks.
 
 WordPress requests reaching the protection pause during application and recovery; authenticated recovery remains available before regular plugins/themes load. The site needs coherent private journal storage and functioning filesystem/database locks. This does not provide distributed multi-host coordination.
 
@@ -19,11 +19,14 @@ Supported: matching existing InnoDB schemas with primary keys, selected themes/p
 Large local exports run in a DDEV CLI worker independently of HTTP time limits. Hosted remote database Pull remains bounded to a single request and fails closed if interrupted. Retain the original connection key for recovering an active job; automatic key-generation rebinding is unavailable.
 
 == Installation ==
-Upload and activate the plugin. Open Tools > Zoer Connect to generate connection info and configure direction permissions. Complete the separate import setup before enabling destination publication. Private storage must be outside the public document root. Deactivation/uninstall preserve private journals; do not remove the connector or MU bootstrap during an active transfer.
+Upload and activate the plugin. Open Tools > Zoer Connect to generate connection info and configure direction permissions. New connection keys prepare shared-hosting migration automatically. If storage or hosting compatibility blocks preparation, resolve the administrator diagnostics and save Push permissions to retry; existing incomplete setups retain manual recovery controls. Private storage must be outside the public document root. Deactivation/uninstall preserve private journals; do not remove the connector or MU bootstrap during an active transfer.
 
 == Changelog ==
 
-= 0.3.13 =
+= 0.3.14 =
+* Enable Push for new keys and prepare shared-hosting migration during key generation. Preserve existing permission choices, revocation and advanced setup; keep per-transfer confirmation in Zoer.
+
+= 0.3.14 =
 Preserve the destination's search-engine visibility during database Push. After a completed Push or rollback, refresh permalink rules once on a normal WordPress request, without rewriting the host's .htaccess file.
 
 = 0.3.12 =

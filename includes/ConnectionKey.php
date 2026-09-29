@@ -5,10 +5,10 @@ namespace ZoerConnect;
 final class ConnectionKey {
     public const OPTION = 'zoer_connect_connection';
 
-    public static function create(int $owner): array {
+    public static function create(int $owner, ?array $previous = null): array {
         if($owner<1)throw new \InvalidArgumentException('Administrator required.');
         $secret='zc_'.bin2hex(random_bytes(32));
-        return [$secret,['hash'=>hash('sha256',$secret),'owner'=>$owner,'createdAt'=>gmdate('c'),'push'=>false,'pull'=>false]];
+        return [$secret,['hash'=>hash('sha256',$secret),'owner'=>$owner,'createdAt'=>gmdate('c'),'push'=>$previous === null ? true : ($previous['push']??false) === true,'pull'=>($previous['pull']??false) === true]];
     }
 
     public static function matches(string $secret, array $record): bool {
