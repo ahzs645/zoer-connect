@@ -40,6 +40,7 @@ Upload and activate the plugin. Open Tools > Zoer Connect to generate connection
 * Rolling back a file publication also removes the directories it created (when empty), so a rolled-back new theme or plugin no longer leaves a broken empty folder.
 * Escape LIKE wildcards in transient exclusions when a database filter object is sent, so only real transient rows are skipped; `database: true` keeps the 0.3.14 query.
 * Database snapshots (Pull and destination find-and-replace) no longer fail with "Schema changed during export." when a concurrent insert, such as a transient or cron lock, advances a table's AUTO_INCREMENT during the export.
+* Push and file comparison accept ordinary file names containing `@ + ~ ! & ' = [ ] #`, such as Akismet's `akismet-refresh-logo@2x.png`, which previously failed every Push that included stock plugins with "Unsupported file path." Traversal, hidden segments, `%`, `\`, `:` and control characters remain rejected.
 
 = 0.3.14 =
 * Enable Push for new keys and prepare shared-hosting migration during key generation. Preserve existing permission choices, revocation and advanced setup; keep per-transfer confirmation in Zoer.

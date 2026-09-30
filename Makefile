@@ -10,6 +10,7 @@ test: lint
 	php tests/auth.php
 	php tests/connection-admin.php
 	php tests/file-comparison.php
+	php tests/path-characters.php
 	php tests/selection.php
 	php tests/export.php
 	php tests/export-modes.php

@@ -35,7 +35,7 @@ final class StageStore {
         $total = 0; $paths = []; $clean = [];
         foreach ($files as $file) {
             $path = $file['path'] ?? '';
-            if (!is_string($path) || strlen($path) > 500 || !preg_match('~^wp-content/(themes|plugins|uploads)/[\p{L}\p{N}\p{M}\p{Zs}_./ ,()-]+$~Du', $path)) throw new \InvalidArgumentException('Unsupported file path.');
+            if (!is_string($path) || strlen($path) > 500 || !preg_match('~^wp-content/(themes|plugins|uploads)/[\p{L}\p{N}\p{M}\p{Zs}_./ ,()@+\~!&\'=\[\]#-]+$~Du', $path)) throw new \InvalidArgumentException('Unsupported file path.');
             foreach (explode('/', $path) as $part) {
                 if (!$part || $part === '.' || $part === '..' || $part[0] === '.') throw new \InvalidArgumentException('Unsafe file path.');
             }
