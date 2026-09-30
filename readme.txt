@@ -16,7 +16,7 @@ WordPress requests reaching the protection pause during application and recovery
 
 Supported: matching existing InnoDB schemas with primary keys, selected themes/plugins/media, SQL up to 2 GiB and individual files and originals up to 2 GiB with block-capable Zoer (older clients retain the 32 MiB path). Core, MU plugins, connector files, configuration, unsafe paths, foreign keys/triggers, early drop-ins, multisite and distributed multi-host storage are unsupported. Destination user identities remain intact. Rollback refuses substantive edits made after completion.
 
-Pull can filter tables, post types, revisions, spam comments and transients, and select themes and plugins by mode or media by date. Imports can review changes before activation, apply custom find-and-replace rules, match authors and create missing tables from a validated schema. Read-only diagnostics report compatibility warnings before a transfer.
+Pull can filter tables, post types, revisions, spam comments and transients, and select themes and plugins by mode or media by date. Imports can keep the site online while tables are staged, review changes before activation, apply custom find-and-replace rules, match authors and create missing tables from a validated schema. Updated Zoer clients upload many verified blocks per request. Read-only diagnostics report compatibility warnings before a transfer.
 
 Large local exports run in a DDEV CLI worker independently of HTTP time limits. Hosted remote database Pull remains bounded to a single request and fails closed if interrupted. Retain the original connection key for recovering an active job; automatic key-generation rebinding is unavailable.
 
@@ -26,12 +26,18 @@ Upload and activate the plugin. Open Tools > Zoer Connect to generate connection
 == Changelog ==
 
 = 0.4.0 =
-* API version 2 for WP Migrate-style transfers. `/status` reports `apiVersion` and per-feature capabilities; older Zoer clients keep the 0.3.14 behaviour.
+* API version 2 for WP Migrate-style transfers. `/status` reports `apiVersion` and per-feature capabilities; older Zoer clients keep the 0.3.14 behaviour, including its URL replacement rules and early request fence.
 * Pull database filters: table subset, post type inclusion list, exclude revisions, spam comments and (by default) transients. Dependent meta, comments and term relationships follow excluded posts.
 * Pull resource modes for themes and plugins (all, active, selected, all except) and a media "modified since" date. Export responses report the source path and exported tables.
 * Read-only `/diagnostics` preflight for Push or Pull keys: WordPress, PHP and database facts, tables, post types, themes, plugins and drop-ins, with warnings for firewalls, page and object caches, table engines, foreign keys, triggers, mixed-case tables, search visibility and HTTPS.
-* Import options: custom and variant URL/path replacements, review before activation, late fencing, table creation from validated schemas, author matching, activation-setting control, pause/resume, backup cleanup, find-and-replace on the destination, cache purging and safe error reporting.
-* Tools > Zoer Connect lists recent transfers with backup cleanup for finished imports; export profiles are editable.
+* Import options: custom and variant URL/path replacements, review before activation, late fencing (the site stays online while tables are staged), table creation from strictly validated schemas, author matching, activation-setting control, pause/resume, backup cleanup, find-and-replace on the destination's own database, cache purging and safe error reporting. Imports can be listed.
+* Batched Push upload: `POST /imports/{id}/batch` accepts many SHA-256-verified 256 KiB blocks per request as a framed binary body (optionally zlib-compressed), a multipart file part or JSON, with about 2 seconds of work per request, idempotent retries, an upload cursor (`?view=upload`) and a 413 response that reports the host's body limit. `/chunks` is unchanged.
+* The replacement size limit (now 16 MiB) applies only to values a rule can change; unrelated large values pass untouched.
+* With the late fence, a live change during staging cancels the import without leaving the site paused, and live cron and maintenance markers are carried into the swap.
+* Table creation and destination find-and-replace never touch tables of another WordPress installation whose prefix extends this site's prefix.
+* Destination find-and-replace snapshots only its selected tables and keeps other tools' options, such as WP Migrate settings.
+* Tools > Zoer Connect lists recent transfers with backup cleanup for finished imports, including imports created before a key rotation; export profiles are editable.
+* Rolling back a file publication also removes the directories it created (when empty), so a rolled-back new theme or plugin no longer leaves a broken empty folder.
 * Escape LIKE wildcards in transient exclusions when a database filter object is sent, so only real transient rows are skipped; `database: true` keeps the 0.3.14 query.
 * Database snapshots (Pull and destination find-and-replace) no longer fail with "Schema changed during export." when a concurrent insert, such as a transient or cron lock, advances a table's AUTO_INCREMENT during the export.
 
