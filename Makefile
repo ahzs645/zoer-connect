@@ -48,6 +48,7 @@ test: lint
 	php tests/admin-transfers.php
 	php tests/request-drain.php
 
-# Run only after integration release checks pass; this target creates release ZIPs.
+# Creates ZIPs for development/prerelease checks; stable publication requires qualification.
 test-package:
+	python3 tests/release_check_test.py
 	python3 tests/build_test.py

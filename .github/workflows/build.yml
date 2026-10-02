@@ -32,15 +32,21 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Validate qualified source and tag
-        if: ${{ !contains(github.ref_name, '-') || !startsWith(github.ref, 'refs/tags/') }}
+        if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
         run: python3 scripts/check-release.py
+      - name: Validate development source
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: python3 scripts/check-release.py --development
       - name: Validate unqualified prerelease metadata and tag
         if: startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-')
         run: python3 scripts/check-release.py --prerelease
       - run: make test-package
       - name: Verify qualified ZIP checksum
-        if: ${{ !contains(github.ref_name, '-') || !startsWith(github.ref, 'refs/tags/') }}
+        if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
         run: python3 scripts/check-release.py --package
+      - name: Verify development ZIP checksum
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: python3 scripts/check-release.py --development --package
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: zoer-connect
