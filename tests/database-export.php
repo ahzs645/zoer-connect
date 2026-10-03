@@ -4,7 +4,8 @@ define('ARRAY_A','ARRAY_A');define('ARRAY_N','ARRAY_N');
 use ZoerConnect\DatabaseExporter;
 function check($ok,$name){if(!$ok)throw new RuntimeException($name);echo "PASS $name\n";}
 class SnapshotDb {
- public $prefix='wp_';public $last_error='';public array $queries=[];public string $failure='';public int $schemas=0;public float $time=0;
+ public $prefix='wp_';public int $lower=0;
+ function get_var($sql){return $this->lower;}public $last_error='';public array $queries=[];public string $failure='';public int $schemas=0;public float $time=0;
  function query($sql){$this->queries[]=$sql;return $this->failure===$sql?false:1;}
  function get_results($sql,$mode){$this->queries[]=$sql;
   if($sql==='SHOW TABLE STATUS')return [['Name'=>'wp_posts','Engine'=>$this->failure==='engine'?'MyISAM':'InnoDB'],['Name'=>'other_secret','Engine'=>'InnoDB']];
@@ -23,6 +24,8 @@ try{
  $db=new SnapshotDb();$path=$root.'/good.sql';DatabaseExporter::write($db,$path);$sql=file_get_contents($path);
  check(str_contains($sql,"X'71756f7465270062696e617279'")&&str_contains($sql,'NULL'),'binary values and NULL preserved');check(!str_contains($sql,'other_secret'),'unrelated tables excluded');
  check(in_array('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY',$db->queries)&&in_array('COMMIT',$db->queries),'one read-only consistent transaction committed');check((bool)array_filter($db->queries,fn($q)=>str_contains($q,'ORDER BY `ID` LIMIT')),'pagination ordered by primary key');check(!file_exists($path.'.partial'),'only complete artifact published');check((fileperms($path)&0777)===0600,'snapshot private permissions');
+ $folded=new SnapshotDb();$folded->prefix='WP_';$folded->lower=1;$foldedPath=$root.'/folded.sql';$tables=DatabaseExporter::write($folded,$foldedPath);$foldedSql=file_get_contents($foldedPath);
+ check($tables===['posts']&&str_contains($foldedSql,'DROP TABLE IF EXISTS `WP_posts`')&&str_contains($foldedSql,'CREATE TABLE `WP_posts`')&&str_contains($foldedSql,'INSERT INTO `WP_posts`'),'case-folded database exports preserve the configured prefix in every snapshot identifier');
  // Regression: MySQL 8/MariaDB report the live AUTO_INCREMENT inside the consistent snapshot, so a
  // concurrent INSERT (transient, cron lock) between the two SHOW CREATE TABLE calls is not a schema change.
  $db=new SnapshotDb();$db->failure='autoinc';$path=$root.'/autoinc.sql';DatabaseExporter::write($db,$path);$sql=file_get_contents($path);

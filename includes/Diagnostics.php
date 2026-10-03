@@ -16,7 +16,7 @@ final class Diagnostics {
         $php=['version'=>PHP_VERSION,'sapi'=>PHP_SAPI,'openBasedirRestricted'=>trim((string)ini_get('open_basedir'))!=='','displayErrors'=>$iniFlag('display_errors'),'displayStartupErrors'=>$iniFlag('display_startup_errors'),'functions'=>array_combine(['inflate_init','inflate_add','gzcompress','fsync','posix_kill','proc_open'],array_map('function_exists',['inflate_init','inflate_add','gzcompress','fsync','posix_kill','proc_open'])),'memoryLimit'=>(string)ini_get('memory_limit'),'maxExecutionTime'=>(int)ini_get('max_execution_time'),'postMaxSize'=>(string)ini_get('post_max_size'),'uploadMaxFilesize'=>(string)ini_get('upload_max_filesize'),'extensions'=>['zip'=>extension_loaded('zip'),'openssl'=>extension_loaded('openssl'),'curl'=>extension_loaded('curl'),'mysqli'=>extension_loaded('mysqli')]];
         $database=self::database($db,$prefix);
         $postTypes=[];
-        if(in_array($prefix.'posts',array_column($database['tables'],'name'),true)){
+        if(in_array('posts',array_column(array_filter($database['tables'],static fn($t)=>$t['prefixed']),'suffix'),true)){
             foreach((array)$db->get_results("SELECT post_type, COUNT(*) AS total FROM `{$prefix}posts` GROUP BY post_type ORDER BY post_type",ARRAY_A) as $row){
                 $name=(string)$row['post_type'];$object=function_exists('get_post_type_object')?get_post_type_object($name):null;
                 $postTypes[]=['name'=>$name,'label'=>is_object($object)&&isset($object->label)?(string)$object->label:$name,'count'=>(int)$row['total']];
@@ -46,7 +46,7 @@ final class Diagnostics {
         $triggers=$names('SELECT EVENT_OBJECT_TABLE FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE()');
         $tables=[];
         foreach(array_slice($status,0,2000) as $row){
-            $name=(string)($row['Name']??'');$prefixed=$prefix!==''&&str_starts_with($name,$prefix);
+            $name=(string)($row['Name']??'');$prefixed=$prefix!==''&&($lower!==0?strncasecmp($name,$prefix,strlen($prefix))===0:str_starts_with($name,$prefix));
             $tables[]=['name'=>$name,'suffix'=>$prefixed?substr($name,strlen($prefix)):null,'prefixed'=>$prefixed,'engine'=>isset($row['Engine'])?(string)$row['Engine']:((string)($row['Comment']??'')==='VIEW'?'VIEW':''),'rows'=>(int)($row['Rows']??0),'bytes'=>(int)($row['Data_length']??0)+(int)($row['Index_length']??0),'primaryKey'=>isset($primary[$name]),'foreignKeys'=>isset($foreign[$name]),'triggers'=>isset($triggers[$name])];
         }
         return ['server'=>stripos($version,'mariadb')!==false?'mariadb':'mysql','version'=>preg_match('/^[0-9]+(?:\.[0-9]+)*/',$version,$m)?$m[0]:'','charset'=>(string)($db->charset??''),'collate'=>(string)($db->collate??''),'lowerCaseTableNames'=>$lower,'tables'=>$tables];

@@ -40,5 +40,20 @@ try{
  $s=$new()->create($body(['tables'=>['missing_table']]));
  $e=reject(fn()=>drive($new,$s['id'],['review_required']),'unknown selected table refused during snapshotting','A selected table does not exist');
  expect($new()->status($s['id'])['error']['phase']==='snapshotting'&&$new()->rollback($s['id'])['phase']==='cancelled','snapshot failure recorded and cancellable');
+ $new()->cleanup($s['id']);
+ $mixed=new MemoryDb('WP_');$mixed->lowerCaseTableNames='1';
+ foreach($db->tables as $name=>$table)if(str_starts_with($name,'wp_'))$mixed->tables['WP_'.substr($name,3)]=$table;
+ $mixedNew=fn()=>new TransferImport($mixed,$base.'/public',$base.'/private',$owner,$target,true);
+ $original=$mixed->dump('WP_posts');$identities=$mixed->dump('WP_users');
+ $s=$mixedNew()->create($body(['tables'=>['posts','options']]));
+ [$s]=drive($mixedNew,$s['id'],['review_required']);
+ expect(array_column($s['stats']['tables'],'name')===['WP_options','WP_posts']&&$mixed->dump('WP_posts')===$original,'folded names resolve to configured mixed-case prefix without changing live content');
+ $mixedNew()->approve($s['id']);[$s]=drive($mixedNew,$s['id'],['verification_required']);$mixedNew()->finish($s['id']);
+ $s=rollbackAll($mixedNew,$s['id']);$mixedNew()->cleanup($s['id']);
+ expect($mixed->dump('WP_posts')===$original&&$mixed->dump('WP_users')===$identities,'mixed-case replacement rollback preserves original content and identities');
+ $mixed->tables['WP_shop_posts']=$mixed->tables['WP_posts'];$mixed->tables['WP_shop_options']=$mixed->tables['WP_options'];
+ $s=$mixedNew()->create($body(['tables'=>['shop_posts']]));
+ reject(fn()=>drive($mixedNew,$s['id'],['review_required']),'folded foreign WordPress prefix refused','belongs to another WordPress installation');
+ $mixedNew()->rollback($s['id']);$mixedNew()->cleanup($s['id']);
  echo "PASS site-local replace snapshots, stages, reviews, applies, rolls back and detects concurrent edits\n";
 }finally{removeTree($base);}

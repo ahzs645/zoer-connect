@@ -82,9 +82,10 @@ final class TransferImport {
     private function otherPrefixes(): array {
         $names=$this->db->get_col($this->db->prepare('SHOW TABLES LIKE %s','%'.$this->db->esc_like('options')));
         if($this->db->last_error||!is_array($names))throw new \RuntimeException('Cannot inspect database.');
-        $out=[];
+        $out=[];$folded=(int)$this->db->get_var('SELECT @@lower_case_table_names')!==0;
         foreach($names as $name){
             if(!is_string($name)||!str_ends_with($name,'options'))continue;$prefix=substr($name,0,-7);
+            if($folded&&strncasecmp($prefix,$this->db->prefix,strlen($this->db->prefix))===0)$prefix=$this->db->prefix.substr($prefix,strlen($this->db->prefix));
             if(strlen($prefix)>strlen($this->db->prefix)&&str_starts_with($prefix,$this->db->prefix)&&$this->exists($prefix.'posts'))$out[]=$prefix;
         }
         return $out;
@@ -403,8 +404,9 @@ final class TransferImport {
             $prefix=$this->db->prefix;$wanted=$this->opt($s)['tables'];
             $names=$this->db->get_col($this->db->prepare('SHOW TABLES LIKE %s',$this->db->esc_like($prefix).'%'));
             if($this->db->last_error||!is_array($names))throw new \RuntimeException('Cannot inspect database.');
-            $selected=[];$others=$this->otherPrefixes();
+            $selected=[];$others=$this->otherPrefixes();$folded=(int)$this->db->get_var('SELECT @@lower_case_table_names')!==0;
             foreach($names as $name){
+                if(is_string($name)&&$folded&&strncasecmp($name,$prefix,strlen($prefix))===0)$name=$prefix.substr($name,strlen($prefix));
                 if(!is_string($name)||!str_starts_with($name,$prefix)||!preg_match('/^[A-Za-z0-9_]+$/D',$name))continue;
                 $suffix=substr($name,strlen($prefix));
                 if($suffix===''||in_array($suffix,['users','usermeta'],true)||($wanted!==null&&!in_array($suffix,$wanted,true)))continue;
@@ -498,13 +500,13 @@ final class TransferImport {
                         // Only tables staged before the snapshot are replaced.
                         $k=array_search($source,array_column($s['tables'],'source'),true);if($k===false)continue;
                         $create=$this->db->get_row("SHOW CREATE TABLE `$table`",ARRAY_N);
-                        if(!isset($create[1])||SnapshotStream::schema($record['schema'],$source)!==SnapshotStream::schema($create[1],$table))throw new \RuntimeException('A table schema changed during the replacement snapshot.');
+                        if(!isset($create[1])||SnapshotStream::schema($record['schema'],$source)!==SnapshotStream::schema($create[1],$table,(int)$this->db->get_var('SELECT @@lower_case_table_names')!==0))throw new \RuntimeException('A table schema changed during the replacement snapshot.');
                         $s['tables'][$k]['schema']=$record['schema'];continue;
                     }
                     if(self::claimed($table,$others))throw new \InvalidArgumentException('The table '.$suffix.' would belong to another WordPress installation in this database; refusing to create or replace it.');
                     $create=!$o['createTables']||$this->exists($table)?$this->db->get_row("SHOW CREATE TABLE `$table`",ARRAY_N):null;
                     $created=false;$replaced=false;
-                    if(!isset($create[1])||SnapshotStream::schema($record['schema'],$source)!==SnapshotStream::schema($create[1],$table)){
+                    if(!isset($create[1])||SnapshotStream::schema($record['schema'],$source)!==SnapshotStream::schema($create[1],$table,(int)$this->db->get_var('SELECT @@lower_case_table_names')!==0)){
                         if(!$o['createTables'])throw new \RuntimeException('Every imported core or plugin table requires an existing matching destination schema.');
                         try{TableStage::sourceSchema($record['schema'],$source);}catch(\InvalidArgumentException $e){throw new \InvalidArgumentException('The source schema for '.$suffix.' cannot be created safely.');}
                         if(strlen($table)>48)throw new \InvalidArgumentException('The table name '.$suffix.' is too long to stage.');

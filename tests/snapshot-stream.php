@@ -28,5 +28,8 @@ try {
  $integerWidth20="CREATE TABLE `wp_terms` (`term_group` bigint(20) NOT NULL DEFAULT 0) ENGINE=InnoDB";
  check(SnapshotStream::schema($integerWidth10,'wp_terms')===SnapshotStream::schema($integerWidth20,'wp_terms'),'Equivalent integer display widths differ.');
  check(SnapshotStream::schema($integerWidth10,'wp_terms')!==SnapshotStream::schema(str_replace('bigint(20)','int(20)',$integerWidth20),'wp_terms'),'Different integer types matched.');
+ check(SnapshotStream::schema($integerWidth10,'WP_terms',true)===SnapshotStream::schema($integerWidth10,'wp_terms'),'Case-folded database DDL resolves to the same table.');
+ rejects(fn()=>SnapshotStream::schema($integerWidth10,'WP_terms'));
+ rejects(fn()=>SnapshotStream::schema($integerWidth10,'WP_posts',true));
  echo "PASS streaming >8 MiB / 25,001 rows; durable cursor retry; integer display widths; schema, statement, footer and duplicate-column rejection\n";
 }finally{unlink($path);}

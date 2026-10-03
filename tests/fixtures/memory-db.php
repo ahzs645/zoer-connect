@@ -56,11 +56,11 @@ final class MemoryDb {
   if(preg_match('/^SELECT (?:GET_LOCK|RELEASE_LOCK)\(/',$sql))return [[['v'=>'1']],['v']];
   if($sql==='SELECT @@SESSION.sql_mode')return [[['v'=>'STRICT_TRANS_TABLES,NO_AUTO_VALUE_ON_ZERO']],['v']];
   if($sql==='SELECT @@lower_case_table_names')return [[['v'=>$this->lowerCaseTableNames]],['v']];
-  if(preg_match("/^SHOW TABLES LIKE ('(?:[^'\\\\]|\\\\.)*')$/s",$sql,$m)){$re=self::likeRegex(self::literal($m[1])).($this->lowerCaseTableNames==='0'?'':'i');$names=array_values(array_filter(array_keys($this->tables),fn($n)=>preg_match($re,$n)));sort($names);return [array_map(fn($n)=>['n'=>$n],$names),['n']];}
-  if($sql==='SHOW TABLE STATUS'){$names=array_keys($this->tables);sort($names);return [array_map(fn($n)=>['Name'=>$n,'Engine'=>'InnoDB'],$names),['Name','Engine']];}
+  if(preg_match("/^SHOW TABLES LIKE ('(?:[^'\\\\]|\\\\.)*')$/s",$sql,$m)){$re=self::likeRegex(self::literal($m[1])).($this->lowerCaseTableNames==='0'?'':'i');$names=array_values(array_filter(array_keys($this->tables),fn($n)=>preg_match($re,$n)));sort($names);return [array_map(fn($n)=>['n'=>$this->lowerCaseTableNames==='0'?$n:strtolower($n)],$names),['n']];}
+  if($sql==='SHOW TABLE STATUS'){$names=array_keys($this->tables);sort($names);return [array_map(fn($n)=>['Name'=>$this->lowerCaseTableNames==='0'?$n:strtolower($n),'Engine'=>'InnoDB'],$names),['Name','Engine']];}
   if(preg_match("/^SELECT ENGINE FROM information_schema\.TABLES .*TABLE_NAME='(\w+)'$/",$sql,$m))return [isset($this->tables[$m[1]])?[['e'=>'InnoDB']]:[],['e']];
   if(preg_match('/^SELECT COUNT\(\*\) FROM information_schema\./',$sql))return [[['c'=>'0']],['c']];
-  if(preg_match('/^SHOW CREATE TABLE `(\w+)`$/',$sql,$m)){if(!isset($this->tables[$m[1]])){$this->last_error="Table '{$m[1]}' doesn't exist";return [[],[]];}return [[['Table'=>$m[1],'Create Table'=>'CREATE TABLE `'.$m[1].'` '.$this->tables[$m[1]]['body']]],['Table','Create Table']];}
+  if(preg_match('/^SHOW CREATE TABLE `(\w+)`$/',$sql,$m)){if(!isset($this->tables[$m[1]])){$this->last_error="Table '{$m[1]}' doesn't exist";return [[],[]];}return [[['Table'=>$this->lowerCaseTableNames==='0'?$m[1]:strtolower($m[1]),'Create Table'=>'CREATE TABLE `'.($this->lowerCaseTableNames==='0'?$m[1]:strtolower($m[1])).'` '.$this->tables[$m[1]]['body']]],['Table','Create Table']];}
   if(preg_match("/^SHOW INDEX FROM `(\w+)` WHERE Key_name ?= ?'PRIMARY'$/",$sql,$m)){$t=$this->table($m[1]);return [array_map(fn($c,$i)=>['Column_name'=>$c,'Seq_in_index'=>(string)($i+1),'Key_name'=>'PRIMARY'],$t['pk'],array_keys($t['pk'])),['Column_name','Seq_in_index','Key_name']];}
   if(preg_match('/^SHOW COLUMNS FROM `(\w+)`$/',$sql,$m))return [array_map(fn($c)=>['Field'=>$c],$this->table($m[1])['columns']),['Field']];
   if(preg_match('/^SELECT COALESCE\(MAX\(sequence_id\),-1\)\+1 FROM `(\w+)`$/',$sql,$m)){$keys=array_map(fn($r)=>(int)$r['sequence_id'],$this->table($m[1])['rows']);return [[['v'=>(string)(($keys?max($keys):-1)+1)]],['v']];}

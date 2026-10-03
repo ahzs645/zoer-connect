@@ -9,8 +9,11 @@ final class SnapshotStream {
     public const HEADER = "-- Zoer Connect database snapshot\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\nSET SQL_MODE='NO_AUTO_VALUE_ON_ZERO';\n";
     public const MAX_RECORD_BYTES = 16777216;
     public static function initial(): array { return ['offset'=>0,'current'=>null,'seen'=>[],'done'=>false]; }
-    public static function schema(string $sql, string $table): string {
+    public static function schema(string $sql, string $table, bool $folded=false): string {
         $prefix='CREATE TABLE `'.$table.'` ';
+        // Only database-authored DDL on a case-folding server may use a folded
+        // identifier. Snapshot input remains strict unless explicitly requested.
+        if($folded&&preg_match('/^CREATE TABLE `([A-Za-z0-9_]+)` /',$sql,$m)&&strcasecmp($m[1],$table)===0)$prefix='CREATE TABLE `'.$m[1].'` ';
         if (!str_starts_with($sql,$prefix)) throw new \InvalidArgumentException('Unexpected schema header.');
         $body=preg_replace('/ AUTO_INCREMENT=[0-9]+(?= |$)/','',substr($sql,strlen($prefix)));
         // MySQL/MariaDB integer display widths do not change stored values.

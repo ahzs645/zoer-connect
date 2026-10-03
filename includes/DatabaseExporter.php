@@ -69,11 +69,13 @@ final class DatabaseExporter {
         if(file_exists($destination)||is_link($destination)||file_exists($partial)||is_link($partial))throw new \RuntimeException('Snapshot already exists.');
         $prefix=$db->prefix;
         if(!preg_match('/^[A-Za-z0-9_]+$/D',$prefix))throw new \RuntimeException('Unsupported table prefix.');
+        $folded=method_exists($db,'get_var')&&(int)$db->get_var('SELECT @@lower_case_table_names')!==0;
         $tables=$db->get_results('SHOW TABLE STATUS',ARRAY_A);
         if($db->last_error||!is_array($tables))throw new \RuntimeException('Cannot inspect database.');
         $selected=[];$present=[];
         foreach($tables as $table){
             $name=$table['Name'];
+            if($folded&&strncasecmp($name,$prefix,strlen($prefix))===0)$name=$prefix.substr($name,strlen($prefix));
             if(!str_starts_with($name,$prefix))continue;
             $present[$name]=true;
             // A table subset may leave out an unsupported table; unselected tables are never read.
@@ -101,7 +103,9 @@ final class DatabaseExporter {
             foreach($selected as $table){
                 $create=$db->get_row("SHOW CREATE TABLE `$table`",ARRAY_N);
                 if($db->last_error||!is_array($create)||!isset($create[1]))throw new \RuntimeException('Cannot inspect table schema.');
-                $write("DROP TABLE IF EXISTS `$table`;\n".$create[1].";\n");
+                $ddl=$create[1];
+                if($folded&&preg_match('/^CREATE TABLE `([A-Za-z0-9_]+)` /',$ddl,$m)&&strcasecmp($m[1],$table)===0)$ddl='CREATE TABLE `'.$table.'` '.substr($ddl,strlen('CREATE TABLE `'.$m[1].'` '));
+                $write("DROP TABLE IF EXISTS `$table`;\n".$ddl.";\n");
                 $keys=$db->get_results("SHOW INDEX FROM `$table` WHERE Key_name = 'PRIMARY'",ARRAY_A);
                 $check();
                 if($db->last_error||!is_array($keys)||!$keys)throw new \RuntimeException('Pull requires primary keys for stable table ordering.');
