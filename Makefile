@@ -17,6 +17,7 @@ test: lint
 	php tests/export-modes.php
 	php tests/remote-export.php
 	php tests/paged-export.php
+	php tests/paged-export-empty.php
 	php tests/export-blocks.php
 	php tests/paged-database.php
 	php tests/paged-maintenance.php

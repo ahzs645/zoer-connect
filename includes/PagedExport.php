@@ -49,9 +49,12 @@ final class PagedExport {
         }
         if($j['phase']==='release_source'){$f=$this->fence();$f->release($j['id'],$this->binding($j));$j['phase']='files';$this->touch($j);$this->save($j);return $this->view($j);}
         if(isset($j['copy']))return $this->copyStep($j);
-        $start=microtime(true);$root=realpath($this->sourceRoot);$count=0;$since=ExportProfile::mediaSince($j['profile']);
+        $start=microtime(true);$root=realpath($this->sourceRoot);$count=0;$smallBytes=0;$since=ExportProfile::mediaSince($j['profile']);
         while($j['queue']&&$count++<250&&microtime(true)-$start<4){
             $relative=array_pop($j['queue']);Selection::path($relative);
+            // A hidden directory must be checked as a parent, not as a leaf filename.
+            $portable=is_dir($root.'/'.$relative)?$relative.'/__entry__':$relative;
+            if(!FileExporter::portableHiddenPath($portable))continue;
             if($relative==='wp-content/plugins/zoer-connect'||str_starts_with($relative,'wp-content/plugins/zoer-connect/'))continue;
             if(Selection::excluded($relative,['**/.git/','**/node_modules/','**/.env','**/.env.*','**/*.log',...$j['profile']['excludes']]))continue;
             $path=$root.'/'.$relative;if(!file_exists($path)&&!is_link($path)){if(in_array($relative,['wp-content/themes','wp-content/plugins','wp-content/uploads','wp-content/mu-plugins'],true))continue;throw new \RuntimeException('Source changed during pull.');}
@@ -65,7 +68,16 @@ final class PagedExport {
             if(count($j['files'])>=100000||(!($j['largeTransfer']??false)&&$j['bytes']+$size>4*1073741824))throw new \RuntimeException('Paged export exceeds its file or byte limit.');
             if(disk_free_space($d)<$size+67108864)throw new \RuntimeException('Insufficient private export storage.');
             $index=count($j['files']);
-            if($j['largeTransfer']??false){$j['copy']=['path'=>$relative,'bytes'=>$size,'offset'=>0,'stat'=>self::identity($path)];$this->touch($j);$this->save($j);return $this->view($j);}
+            if($j['largeTransfer']??false){
+                if($size<=262144&&$smallBytes+$size<=4194304){
+                    // Batch small files within the existing entry/time bounds and a 4 MiB budget.
+                    // A lost response replays from the journal and truncates uncommitted snapshots.
+                    $identity=self::identity($path);$target=$d.'/'.$index.'.bin';
+                    if(ExportBlocks::append($path,$target,0,$size)!==$size||ExportBlocks::verifySource($path,$target,0,$size)!==$size||self::identity($path)!==$identity)throw new \RuntimeException('Source changed during pull.');
+                    $j['files'][]=ExportBlocks::entry($target,$relative,$size);$j['bytes']+=$size;$smallBytes+=$size;continue;
+                }
+                $j['copy']=['path'=>$relative,'bytes'=>$size,'offset'=>0,'stat'=>self::identity($path)];$this->touch($j);$this->save($j);return $this->view($j);
+            }
             $tmp=$d.'/'.$index.'.tmp';if(is_link($tmp)||is_link($d.'/'.$index.'.bin'))throw new \RuntimeException('Unsafe snapshot.');
             if(!copy($path,$tmp))throw new \RuntimeException('Cannot snapshot file.');chmod($tmp,0600);$hash=hash_file('sha256',$tmp);clearstatcache(true,$path);
             if(filesize($tmp)!==$size||filesize($path)!==$size||$hash!==hash_file('sha256',$path))throw new \RuntimeException('Source changed during pull.');
@@ -107,7 +119,8 @@ final class PagedExport {
         for($p=$path;$p!==$root;$p=dirname($p))if(is_link($p))throw new \RuntimeException('Symlink source rejected.');
         if(self::identity($path)!==$c['stat'])throw new \RuntimeException('Source changed during pull.');
         $target=$this->dir($j['id']).'/'.count($j['files']).'.bin';
-        $c['offset']=$c['offset']<$c['bytes']?ExportBlocks::append($path,$target,$c['offset'],$c['bytes']):$c['offset'];
+        // Empty files still need durable snapshot and block-seal files before entry().
+        $c['offset']=($c['offset']<$c['bytes']||$c['bytes']===0)?ExportBlocks::append($path,$target,$c['offset'],$c['bytes']):$c['offset'];
         if($c['offset']===$c['bytes'])$c['verified']=ExportBlocks::verifySource($path,$target,$c['verified']??0,$c['bytes']);
         if(self::identity($path)!==$c['stat'])throw new \RuntimeException('Source changed during pull.');
         if($c['offset']===$c['bytes']&&($c['verified']??0)===$c['bytes']){$j['files'][]=ExportBlocks::entry($target,$c['path'],$c['bytes']);$j['bytes']+=$c['bytes'];unset($j['copy']);}
@@ -120,6 +133,9 @@ final class PagedExport {
     public function batch(string $id,int $index,int $offset):array{return $this->locked(function()use($id,$index,$offset){
         $j=$this->read($id);if($j['status']!=='ready'||$index<0||!isset($j['files'][$index])||$offset<0)throw new \InvalidArgumentException('Invalid export range.');$chunks=[];$total=0;$batchBytes=($j['largeTransfer']??false)?4194304:1048576;
         while(isset($j['files'][$index])&&count($chunks)<32&&$total<$batchBytes){$f=$j['files'][$index];if($offset>$f['bytes'])throw new \InvalidArgumentException('Invalid export offset.');$p=$this->dir($id).'/'.$index.'.bin';if(is_link($p)||!is_file($p)||filesize($p)!==$f['bytes'])throw new \RuntimeException('Snapshot unavailable.');
+            // The next request must start on a sealed block boundary. Earlier small
+            // files can leave less than one full block in this batch's byte budget.
+            if(($f['digestFormat']??null)===ExportBlocks::FORMAT&&min(262144,$f['bytes']-$offset)>$batchBytes-$total)break;
             $h=fopen($p,'rb');try{if(!$h||fseek($h,$offset)!==0)throw new \RuntimeException('Cannot read snapshot.');$data=fread($h,min(262144,$batchBytes-$total));if($data===false)throw new \RuntimeException('Cannot read snapshot.');}finally{if(is_resource($h))fclose($h);}
             $n=strlen($data);if(($f['digestFormat']??null)===ExportBlocks::FORMAT&&$n)ExportBlocks::verify($p,$offset,$data);$chunks[]=['index'=>$index,'offset'=>$offset,'bytes'=>$n,'data'=>base64_encode($data),'sha256'=>hash('sha256',$data)];$total+=$n;$offset+=$n;if($offset===$f['bytes']){$index++;$offset=0;}elseif(!$n)throw new \RuntimeException('Snapshot truncated.');
         }$this->touch($j);$this->save($j);return ['id'=>$id,'chunks'=>$chunks];

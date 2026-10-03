@@ -1,6 +1,21 @@
 <?php
 namespace ZoerConnect;
 final class FileExporter {
+    /** Match the receiving client's portable hidden-file boundary. Unknown dotfiles
+     * may contain credentials or development caches; never export them by default. */
+    public static function portableHiddenPath(string $path):bool {
+        $metadata=['.editorconfig','.gitattributes','.gitignore','.gitkeep','.npmignore','.nvmrc','.node-version','.deployignore','.deepsource.toml','.wp-env.json',
+            '.prettierignore','.prettierrc','.prettierrc.json','.prettierrc.yaml','.prettierrc.yml','.prettierrc.js','.prettierrc.cjs',
+            '.eslintignore','.eslintrc','.eslintrc.json','.eslintrc.yaml','.eslintrc.yml','.eslintrc.js','.eslintrc.cjs',
+            '.markdownlintignore','.markdownlint.json','.markdownlint.yaml','.markdownlint.yml',
+            '.phpcs.xml','.phpcs.xml.dist','.phpcs.dir.xml','.phpcs.dir.phpcompatibility.xml','.phpstorm.meta.php'];
+        $parts=explode('/',$path);foreach($parts as $i=>$part){
+            if(!str_starts_with($part,'.'))continue;$leaf=$i===count($parts)-1;
+            if($leaf&&$part==='.htaccess'&&str_starts_with($path,'wp-content/'))continue;
+            if(preg_match('~^wp-content/(plugins|themes)/~',$path)&&($leaf?in_array($part,$metadata,true):in_array($part,['.trash','.github'],true)))continue;
+            return false;
+        }return true;
+    }
     /** Content roots to traverse. Theme/plugin modes resolve against a trusted top-level scan of the source;
      * $active lists active theme slugs (stylesheet and template) and plugin slugs (directory or single file). */
     public static function roots(string $root,array $profile,array $active=[]): array {
@@ -28,6 +43,7 @@ final class FileExporter {
         $files=[];
         $add=static function(string $path)use(&$files,$root,$profile,$since){
             Selection::path($path);
+            if(!self::portableHiddenPath($path))return;
             if(str_starts_with($path,'wp-content/plugins/zoer-connect/'))return;
             if(Selection::excluded($path,['**/.git/','**/node_modules/','**/.env','**/.env.*','**/*.log',...$profile['excludes']]))return;
             $full=$root.'/'.$path;$real=realpath($full);
