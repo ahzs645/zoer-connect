@@ -7,6 +7,7 @@ lint:
 test: lint
 	php tests/run.php
 	php tests/storage.php
+	php tests/transfer-storage.php
 	php tests/auth.php
 	php tests/connection-admin.php
 	php tests/file-comparison.php
@@ -16,6 +17,9 @@ test: lint
 	php tests/export-modes.php
 	php tests/remote-export.php
 	php tests/paged-export.php
+	php tests/export-blocks.php
+	php tests/paged-database.php
+	php tests/paged-maintenance.php
 	php tests/database-export.php
 	php tests/database-filters.php
 	php tests/diagnostics.php
@@ -24,6 +28,7 @@ test: lint
 	php tests/coordinator.php
 	php tests/publication.php
 	php tests/chunked-publication.php
+	php tests/chunked-publication.php --batched
 	php tests/chunked-failures.php
 	php tests/created-directories.php
 	php tests/peer-import.php

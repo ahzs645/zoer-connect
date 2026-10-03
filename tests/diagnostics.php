@@ -20,7 +20,7 @@ function wp_get_themes(){return ['child'=>new FixtureTheme(['Name'=>'Child','Ver
 function get_plugins(){return ['wordfence/wordfence.php'=>['Name'=>'Wordfence','Version'=>'8.0'],'litespeed-cache/litespeed-cache.php'=>['Name'=>'LiteSpeed Cache','Version'=>'7.0'],'hello.php'=>['Name'=>'Hello Dolly','Version'=>'1.7'],'zoer-connect/zoer-connect.php'=>['Name'=>'Zoer Connect','Version'=>'0.4.0']];}
 function get_mu_plugins(){return ['000-zoer-connect-fence.php'=>['Name'=>'']];}
 function get_dropins(){return ['advanced-cache.php'=>['Name'=>'Advanced caching plugin'],'object-cache.php'=>['Name'=>'External object cache']];}
-function get_site_transient($key){return $key==='update_plugins'?(object)['response'=>['zoer-connect/zoer-connect.php'=>(object)['new_version'=>'0.4.1']],'no_update'=>[]]:false;}
+function get_site_transient($key){return $key==='update_plugins'?(object)['response'=>['zoer-connect/zoer-connect.php'=>(object)['new_version'=>'0.5.1']],'no_update'=>[]]:false;}
 $wpdb=new class {
  public $prefix='wp_';public $charset='utf8mb4';public $collate='utf8mb4_unicode_520_ci';public $last_error='';public array $queries=[];
  function get_var($sql){$this->queries[]=$sql;return $sql==='SELECT VERSION()'?'11.4.3-MariaDB-log':($sql==='SELECT @@lower_case_table_names'?'0':null);}
@@ -49,7 +49,7 @@ try{
  [,$other]=ConnectionKey::create(1);$saved=$connection;$connection=$other+['pull'=>true];check($permission($native)->data['status']===401,'diagnostics require the current key');$connection=$saved;
  $connection['push']=true;
  $status=$routes['/status']['GET']['callback']($native)->data;
- check($status['version']==='0.4.0'&&$status['apiVersion']===2,'status reports 0.4.0 and API version 2');
+ check($status['version']===\ZoerConnect\Plugin::VERSION&&$status['apiVersion']===2,'status reports current version and API version 2');
  $flags=['replacementRules','replacementVariants','reviewPause','createTables','authorMapping','keepActivePlugins','lateFence','importPauseResume','importCleanup','importList','siteReplace','cachePurge','databaseFilters','resourceModes','mediaSince','diagnostics','safeErrors'];
  check(!array_diff($flags,array_keys(array_filter($status['capabilities'],fn($v)=>$v===true))),'status advertises every API v2 capability');
  check(!array_diff(['pagedExport','connectionKey','stageFiles','pull','publish','selectivePush','artifactReuse','chunkedFilePublication','databaseImport','rollback'],array_keys($status['capabilities'])),'existing capability flags retained');
@@ -67,7 +67,7 @@ try{
  check($r['themes']===[['slug'=>'child','name'=>'Child','version'=>'1.0','active'=>true,'parent'=>'parent'],['slug'=>'parent','name'=>'Parent','version'=>'2.0','active'=>true,'parent'=>null],['slug'=>'spare','name'=>'Spare','version'=>'3.0','active'=>false,'parent'=>null]],'themes with active child and parent');
  check($r['plugins'][2]===['slug'=>'hello.php','file'=>'hello.php','name'=>'Hello Dolly','version'=>'1.7','active'=>false]&&$r['plugins'][0]['slug']==='wordfence'&&$r['plugins'][0]['active'],'plugin slugs are directory or single-file names');
  check($r['muPlugins']===[['file'=>'000-zoer-connect-fence.php','name'=>'']]&&$r['dropins']===['advanced-cache.php','object-cache.php'],'MU plugins and drop-ins');
- check($r['pluginUpdate']===['current'=>'0.4.0','latest'=>'0.4.1'],'plugin update from update_plugins transient');
+ check($r['pluginUpdate']===['current'=>\ZoerConnect\Plugin::VERSION,'latest'=>'0.5.1'],'plugin update from update_plugins transient');
  $codes=array_column($r['warnings'],'code');
  foreach(['firewall_plugin','page_cache_plugin','object_cache_dropin','mixed_case_tables','non_innodb','foreign_keys','triggers','blog_private','no_https'] as $code)check(in_array($code,$codes,true),'warning '.$code);
  $messages=implode("\n",array_column($r['warnings'],'message'));

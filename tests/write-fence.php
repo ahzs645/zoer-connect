@@ -37,7 +37,10 @@ try{
  check((json_decode($run($route,'revoked-key'),true)['denied']??false)===true,'Early authentication denial did not intercept ordinary plugins.');
  check((json_decode($run('/wp-cron.php',''),true)['code']??'')==='zoer_transfer_paused','Cron bypassed persistent fence.');
  check((json_decode($run('/wp-admin/admin-ajax.php',''),true)['code']??'')==='zoer_transfer_paused','Admin writer bypassed persistent fence.');
- $f->release($id,$owner);$f->enter();
+ $f->release($id,$owner);
+ $f->reserveExport($id,$owner);$marker=$base.'/private/write-fence.json';$state=json_decode(file_get_contents($marker),true);check($state['kind']==='export'&&$state['expiresAt']>time(),'Source pause has bounded lifetime.');
+ $f->expireExport();check(is_file($marker),'Live source pause must not expire.');$state['expiresAt']=time()-1;file_put_contents($marker,json_encode($state));$f->expireExport();check(!file_exists($marker),'Expired read-only export releases source.');
+ $f->reserve($id,$owner);$state=json_decode(file_get_contents($marker),true);$state['expiresAt']=time()-1;file_put_contents($marker,json_encode($state));$f->expireExport();check(is_file($marker),'Import must never auto-release on expiry.');$f->release($id,$owner);$f->enter();
  check(WriteFence::importRoute(['REQUEST_URI'=>'/wp-json/zoer-connect/v1/imports/'.$id.'/rollback'],[])==='/zoer-connect/v1/imports/'.$id.'/rollback','Pretty recovery route missing.');
  check(WriteFence::importRoute([],['rest_route'=>'/zoer-connect/v1/imports'])==='/zoer-connect/v1/imports','Query recovery route missing.');
  foreach(['/wp-json/zoer-connect/v1/imports/../../users','/wp-json/zoer-connect/v1/imports/bad','/wp-json/zoer-connect/v1/export'] as $route)check(WriteFence::importRoute(['REQUEST_URI'=>$route],[])===null,'Broad route bypass.');

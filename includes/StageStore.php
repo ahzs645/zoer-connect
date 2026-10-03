@@ -1,5 +1,6 @@
 <?php
 namespace ZoerConnect;
+require_once __DIR__.'/TransferStorage.php';
 
 /** Private, bounded staging. This class never writes into a live WordPress tree. */
 final class StorageUnavailable extends \RuntimeException {
@@ -8,7 +9,7 @@ final class StorageUnavailable extends \RuntimeException {
 
 final class StageStore {
     public const CHUNK = 262144;
-    public const MAX_BYTES = 2147483648;
+    public const MAX_BYTES = TransferStorage::FILE_BYTES;
     public const MAX_FILES = 20000;
     private string $root;
 
@@ -47,7 +48,7 @@ final class StageStore {
             $bytes = $file['bytes'] ?? null; $sha = $file['sha256'] ?? '';
             if (!is_int($bytes) || $bytes < 0 || $bytes > self::MAX_BYTES || !is_string($sha) || !preg_match('/^[a-f0-9]{64}$/D', $sha)) throw new \InvalidArgumentException('Invalid file metadata.');
             $total += $bytes;
-            if ($total > self::MAX_BYTES) throw new \InvalidArgumentException('Bundle too large.');
+            if ($total > TransferStorage::quota()) throw new \InvalidArgumentException('Bundle too large.');
             $clean[] = ['path' => $path, 'bytes' => $bytes, 'sha256' => $sha];
         }
         // Reject file/directory collisions as well as case-insensitive duplicates.

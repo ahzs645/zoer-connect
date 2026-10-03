@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.4.0
+Stable tag: 0.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -14,16 +14,22 @@ Generating a new connection key enables Push and automatically prepares shared-h
 
 WordPress requests reaching the protection pause during application and recovery; authenticated recovery remains available before regular plugins/themes load. Exclude /wp-json/zoer-connect/ and equivalent rest_route URLs from every page cache/CDN before connecting, then purge existing entries. A no-store response alone cannot override a host configured to cache authenticated API responses. The site needs coherent private journal storage and functioning filesystem/database locks. This does not provide distributed multi-host coordination.
 
-Supported: matching existing InnoDB schemas with primary keys, selected themes/plugins/media, SQL up to 2 GiB and individual files and originals up to 2 GiB with block-capable Zoer (older clients retain the 32 MiB path). Core, MU plugins, connector files, configuration, unsafe paths, foreign keys/triggers, early drop-ins, multisite and distributed multi-host storage are unsupported. Destination user identities remain intact. Rollback refuses substantive edits made after completion.
+Supported: matching existing InnoDB schemas with primary keys, selected themes/plugins/media, SQL up to 4 GiB and individual files and originals up to 4 GiB with block-capable Zoer (older clients retain the 32 MiB path). Core, MU plugins, connector files, configuration, unsafe paths, foreign keys/triggers, early drop-ins, multisite and distributed multi-host storage are unsupported. Destination user identities remain intact. Rollback refuses substantive edits made after completion.
 
 Pull can filter tables, post types, revisions, spam comments and transients, and select themes and plugins by mode or media by date. Imports can keep the site online while tables are staged, review changes before activation, apply custom find-and-replace rules, match authors and create missing tables from a validated schema. Updated Zoer clients upload many verified blocks per request. Read-only diagnostics report compatibility warnings before a transfer.
 
-Large local exports run in a DDEV CLI worker independently of HTTP time limits. A local export is limited to 2 GiB; oversized database snapshots and file sets are refused and incomplete artifacts removed. Hosted remote database Pull is limited to a 256 MiB snapshot within 40 seconds and fails closed if interrupted. Retain the original connection key for recovering an active job; automatic key-generation rebinding is unavailable.
+Large local exports run in a DDEV CLI worker independently of HTTP time limits. Updated Zoer servers use a configurable 16 GiB transfer quota (1 MiB–64 GiB), a 4 GiB per-artifact ceiling and repeated free-space checks. The local worker retains its 30-minute consistent-transaction deadline. Hosted read-only database Pull retains its 256 MiB/40-second snapshot. The optional source-pause mode exports larger InnoDB databases with typed table/row checkpoints and checksummed parts. It requires Push and Pull, request protection and explicit confirmation that earlier requests, scheduled jobs and external writers have stopped. It pauses WordPress while the database is prepared; cancel or successful sealing resumes it. An idle source pause expires after one hour and its old snapshot cannot resume. Native Tools > Zoer Connect configures the hosted quota; server and DDEV quotas use ZOER_WORDPRESS_TRANSFER_QUOTA_BYTES. Existing recovery data stays at its original location. Retain the original connection key for recovering an active job; automatic key-generation rebinding is unavailable.
 
 == Installation ==
 Upload and activate the plugin. Open Tools > Zoer Connect to generate connection info and configure direction permissions. New connection keys prepare shared-hosting migration automatically. If storage or hosting compatibility blocks preparation, resolve the administrator diagnostics and save Push permissions to retry; existing incomplete setups retain manual recovery controls. Private storage must be outside the public document root. Deactivation/uninstall preserve private journals; do not remove the connector or MU bootstrap during an active transfer.
 
 == Changelog ==
+
+= 0.5.0 =
+* Configurable quotas, disk reserves and 4 GiB individual artifacts for updated Zoer clients.
+* Resumable source-pause database export with typed keyset cursors, checksummed output parts, bounded SQL reads and safe cancellation/expiry.
+* Bounded source file preparation, ordered block-root verification, publication, original-file backup and rollback. Earlier jobs keep their original recovery path.
+* Native quota settings and authenticated status during paused transfers. Repeat request-protection setup after updating.
 
 = 0.4.0 =
 * API version 2 for WP Migrate-style transfers. `/status` reports `apiVersion` and per-feature capabilities; older Zoer clients keep the 0.3.14 behaviour, including its URL replacement rules and early request fence.

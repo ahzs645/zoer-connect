@@ -6,10 +6,12 @@ require_once __DIR__.'/FilePublication.php';
 /** One authenticated artifact, bounded I/O and durable cursors across requests.
  * The caller holds the destination writer fence through activation/recovery. */
 final class ChunkedFilePublication {
-    public const LIMIT=2147483648;
+    public const LIMIT=TransferStorage::FILE_BYTES;
     private string $root;
     private string $private;
-    public function __construct(string $root,string $private){
+    private int $blocks;
+    public function __construct(string $root,string $private,int $blocks=1){
+        $this->blocks=max(1,min(32,$blocks));
         $this->root=realpath($root)?:throw new \RuntimeException('Missing destination.');
         $this->private=realpath($private)?:throw new \RuntimeException('Missing private storage.');
         if($this->private===$this->root||str_starts_with($this->private,$this->root.'/'))throw new \RuntimeException('Public backup storage.');
@@ -34,7 +36,7 @@ final class ChunkedFilePublication {
         if(is_file($this->private.'/publication.json'))throw new \RuntimeException('Publication exists.');StageStore::validateManifest($manifest,$manifest['target']);
         if(count($manifest['files'])!==1||count($sources)!==1)throw new \InvalidArgumentException('One artifact required.');$a=$manifest['files'][0];self::validate($a);
         $src=realpath($sources[0]);if(!$src||is_link($sources[0])||!str_starts_with($src,$this->private.'/')||$this->size($src)!==$a['bytes'])throw new \RuntimeException('Invalid staged file.');
-        $target=$this->target($a['path']);$old=$this->size($target);if($old!==null&&$old>self::LIMIT)throw new \RuntimeException('Destination original exceeds 2 GiB.');
+        $target=$this->target($a['path']);$old=$this->size($target);if($old!==null&&$old>self::LIMIT)throw new \RuntimeException('Destination original exceeds the per-file transfer limit.');
         if(disk_free_space($this->private)<($old??0)+67108864)throw new \RuntimeException('Insufficient backup space.');
         if(array_key_exists('expectedDestinationSha256',$a)&&FileComparison::fingerprint($this->root,$a['path'])!==$a['expectedDestinationSha256'])throw new \RuntimeException('Destination changed since preview.');
         $s=['version'=>2,'status'=>'backing_up','phase'=>'source_check','offset'=>0,'file'=>$a,'source'=>$src,'oldBytes'=>$old,'oldBlocks'=>[],'mode'=>$old===null?0644:(fileperms($target)&0777),'token'=>bin2hex(random_bytes(12)),'activated'=>false];$this->save($s);return $s;
@@ -52,6 +54,7 @@ final class ChunkedFilePublication {
     public function step():array{return $this->locked(function(){
         $s=$this->read();if(!in_array($s['status'],['backing_up','applying'],true))return $s;
         $a=$s['file'];$target=$this->target($a['path']);$backup=$this->private.'/backup';$tmp=$target.'.zoer-tmp-'.$s['token'];
+        $started=microtime(true);$phase=$s['phase'];$n=0;do {
         switch($s['phase']){
         case 'source_check':if($this->check($s['source'],$a['bytes'],$a['chunkSha256'],$s['offset']))$this->next($s,'old_scan');break;
         case 'old_scan':
@@ -75,12 +78,14 @@ final class ChunkedFilePublication {
             $s['activated']=true;$this->next($s,'applied_check');break;
         case 'applied_check':if($this->check($target,$a['bytes'],$a['chunkSha256'],$s['offset'])){$s['status']='verification_required';$s['phase']='applied';}break;
         default:throw new \RuntimeException('Unknown publication phase.');
-        }$this->save($s);return $s;
+        }
+        }while(++$n<$this->blocks&&microtime(true)-$started<2&&$s['phase']===$phase&&in_array($s['status'],['backing_up','applying'],true));
+        $this->save($s);return $s;
     });}
     /** Fresh per-attempt cursors prevent reuse of preflight from an earlier fence. */
     public function resetRollbackPreflight():void{$this->locked(function(){$s=$this->read();unset($s['preflight']);$this->save($s);});}
     public function rollbackPreflightStep():bool{return $this->locked(function(){
-        $s=$this->read();$result=$this->preflight($s);$this->save($s);return $result;
+        $s=$this->read();$start=microtime(true);$n=0;do{$result=$this->preflight($s);}while(!$result&&++$n<$this->blocks&&microtime(true)-$start<2);$this->save($s);return $result;
     });}
     private function preflight(array &$s):bool{
         if(!$s['activated']&&!in_array($s['phase'],['rename','applied_check','applied','restore_copy','restore_check','restore_rename','restored_check'],true))return true;
@@ -103,6 +108,7 @@ final class ChunkedFilePublication {
             if(!$s['activated']&&!in_array($s['phase'],['rename','applied_check','applied'],true)){$s['status']='rolled_back';if(is_file($tmp))unlink($tmp);FilePublication::removeCreatedDirectories($this->root,$s['createdDirs']??[]);$this->save($s);return $s;}
             $s['status']='rolling_back';$this->next($s,'restore_copy');$this->save($s);
         }
+        $started=microtime(true);$phase=$s['phase'];$n=0;do {
         switch($s['phase']){
         case 'restore_copy':
             if($s['oldBytes']===null){if(is_file($target)&&!unlink($target))throw new \RuntimeException('Cannot restore absence.');$s['status']='rolled_back';break;}
@@ -113,6 +119,7 @@ final class ChunkedFilePublication {
         case 'restored_check':if($this->check($target,$s['oldBytes'],$s['oldBlocks'],$s['offset']))$s['status']='rolled_back';break;
         default:throw new \RuntimeException('Unknown restore phase.');
         }
+        }while(++$n<$this->blocks&&microtime(true)-$started<2&&$s['phase']===$phase&&$s['status']==='rolling_back');
         if($s['status']==='rolled_back'){if(is_file($tmp))unlink($tmp);FilePublication::removeCreatedDirectories($this->root,$s['createdDirs']??[]);}$this->save($s);return $s;
     });}
 }

@@ -2,7 +2,7 @@
 namespace ZoerConnect;
 
 final class Plugin {
-    public const VERSION = '0.4.0';
+    public const VERSION = '0.5.0';
     private static bool $applicationPassword = false;
     public static function boot(): void {
         add_action('application_password_did_authenticate', static function () { self::$applicationPassword = true; });
@@ -43,11 +43,14 @@ final class Plugin {
                 update_option('zoer_connect_storage_dir',$path,false);$notice='Private storage configured. Test the connection in Zoer and resume the Pull.';
             }catch(\Throwable $e){$error=$e instanceof StorageUnavailable ? $e->reason : $e->getMessage();}
         }
+        if(isset($_POST['zoer_quota_save'])){check_admin_referer('zoer_connect_quota');try{$value=trim((string)wp_unslash($_POST['zoer_quota_bytes']??''));if(!ctype_digit($value)||(int)$value<1048576||(int)$value>68719476736)throw new \RuntimeException('Enter a quota from 1048576 to 68719476736 bytes.');if(defined('ZOER_CONNECT_TRANSFER_QUOTA_BYTES'))throw new \RuntimeException('The server configuration controls this quota.');update_option('zoer_connect_transfer_quota_bytes',$value,false);$notice='Transfer quota saved. Existing recovery data is preserved.';}catch(\Throwable $e){$error=$e->getMessage();}}
         $status=self::storageStatus();
         echo '<h2>Storage diagnostics</h2><p><strong>'.esc_html($status['code']).'</strong>: '.esc_html($status['message']).'</p>';
         echo '<p>Current path: <code>'.esc_html(self::storageRoot()).'</code></p><p>PHP filesystem restriction: <code>'.esc_html(ini_get('open_basedir')?:'not configured').'</code></p>';
         if($notice)echo '<div class="notice notice-success"><p>'.esc_html($notice).'</p></div>';
         if($error)echo '<div class="notice notice-error"><p>'.esc_html($error).'</p></div>';
+        echo '<h3>Transfer storage quota</h3><p>Per transfer, in bytes. Free space and recovery storage are checked separately. Individual artifacts are limited to 4 GiB.</p><form method="post">';wp_nonce_field('zoer_connect_quota');
+        echo '<label>Quota bytes <input type="number" name="zoer_quota_bytes" min="1048576" max="68719476736" value="'.esc_attr((string)TransferStorage::quota()).'"'.(defined('ZOER_CONNECT_TRANSFER_QUOTA_BYTES')?' disabled':'').'></label> <button class="button" name="zoer_quota_save" value="1"'.(defined('ZOER_CONNECT_TRANSFER_QUOTA_BYTES')?' disabled':'').'>Save quota</button></form>';
         if(!defined('ZOER_CONNECT_STORAGE_DIR')&&get_option('zoer_connect_storage_dir','')===''){
             echo '<form method="post"><p>For first-time setup, choose a writable folder outside every public document root. Zoer will not move existing transfers. If PHP cannot access any private folder, ask the server administrator to provide one.</p>';
             wp_nonce_field('zoer_connect_storage');
@@ -100,27 +103,31 @@ final class Plugin {
         $record=is_string($raw)?@unserialize($raw,['allowed_classes'=>false]):null;
         $token=(string)($_SERVER['HTTP_X_ZOER_CONNECTION']??'');
         if(!is_array($record)||!ConnectionKey::matches($token,$record))return $fail(401,'Invalid or revoked connection key.');
-        if(!ConnectionKey::permits($record,'push'))return $fail(403,'Push permission is disabled.');
+        $export=str_starts_with($route,'/zoer-connect/v1/exports/paged');
+        if(!ConnectionKey::permits($record,($route==='/zoer-connect/v1/status'?'status':($export?'pull':'push'))))return $fail(403,$export?'Pull permission is disabled.':'Push permission is disabled.');
         // User/pluggable initialization has not run at MU loading time. Read the
         // current native account and capabilities directly, never trust request IDs.
         $owner=(int)($record['owner']??0);
         $caps=$wpdb->get_var($wpdb->prepare("SELECT meta_value FROM `{$wpdb->usermeta}` WHERE user_id=%d AND meta_key=%s",$owner,$wpdb->prefix.'capabilities'));
         $caps=is_string($caps)?@unserialize($caps,['allowed_classes'=>false]):null;
         if(!is_array($caps)||($caps['administrator']??false)!==true||!$wpdb->get_var($wpdb->prepare("SELECT ID FROM `{$wpdb->users}` WHERE ID=%d",$owner)))return $fail(401,'The connection owner must remain an administrator.');
+        if($route==='/zoer-connect/v1/status'){if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET')return $fail(405,'Unsupported status method.');return self::statusView($record);}
+        if($export)return self::earlyExportRecovery($route,$record,$fail);
         if(!preg_match('~^/zoer-connect/v1/imports(?:/([a-f0-9]{32})(?:/(chunks|batch|step|rollback|finish|pause|resume|approve|cleanup))?)?$~D',$route,$m))return $fail(404,'Unknown import operation.');
         $import=null;$id=$m[1]??null;
         try {
             self::store();
             $root=self::storageRoot();
-            $target=rtrim((string)$wpdb->get_var($wpdb->prepare("SELECT option_value FROM `{$wpdb->options}` WHERE option_name=%s",'home')),'/');
+            $target=rtrim((string)get_option('home'),'/');
             $import=new TransferImport($wpdb,ABSPATH,$root,$record['hash'],$target,true);
             $method=$_SERVER['REQUEST_METHOD']??'GET';$action=$m[2]??null;
             if($method==='GET'&&!$id)return $import->list();
             if($method==='GET'&&$id&&!$action)return ($_GET['view']??null)==='upload'?$import->upload($id):$import->status($id);
             if($method!=='POST')return $fail(405,'Unsupported import method.');
             if($action==='batch')return self::batchRequest($import,$id);
-            $raw=file_get_contents('php://input',false,null,0,2097153);
-            if(strlen($raw)>2097152)return $fail(413,'Import request exceeds 2 MiB.');
+            $max=$id===null?8388608:2097152;
+            $raw=file_get_contents('php://input',false,null,0,$max+1);
+            if(strlen($raw)>$max)return $fail(413,$id===null?'Import manifest exceeds 8 MiB. Select fewer artifacts.':'Import request exceeds 2 MiB.');
             $body=$raw===''?[]:json_decode($raw,true,512,JSON_THROW_ON_ERROR);
             if(!is_array($body))return $fail(400,'JSON import data required.');
             if(!$id){if(!ImportAdmin::ready($root,ABSPATH))return $fail(409,'Complete destination import setup in Tools → Zoer Connect first.');$mode=ImportAdmin::mode($root,ABSPATH);if(($body['migrationMode']??'verified-workers')!==$mode)return $fail(409,'Migration mode differs from destination setup. Refresh the connection.');$body['destinationAdminId']=$owner;return $import->create($body);}
@@ -136,6 +143,33 @@ final class Plugin {
             http_response_code($e instanceof \InvalidArgumentException?400:409);
             return TransferImport::safeError($e,$import&&$id?$import->phase($id):null);
         }
+    }
+    /** Paged source operations also run before ordinary plugins while paused. */
+    private static function earlyExportRecovery(string $route,array $record,callable $fail):array {
+        global $wpdb,$wp_version;
+        foreach(['Selection','ExportProfile','FileExporter','PagedExport'] as $c)require_once __DIR__.'/'.$c.'.php';
+        if(!preg_match('~^/zoer-connect/v1/exports/paged(?:/([a-f0-9]{32})(?:/(step|manifest|batch))?)?$~D',$route,$m))return $fail(404,'Unknown export operation.');
+        try {
+            $store=self::exports(true);$id=$m[1]??null;$action=$m[2]??null;$method=$_SERVER['REQUEST_METHOD']??'GET';
+            if($id&&$method==='DELETE'&&!$action)return $store->cancel($id);
+            if($id&&$method==='GET'&&!$action)return $store->status($id);
+            if($id&&$method==='GET'&&in_array($action,['manifest','batch'],true)){
+                $keys=$action==='manifest'?['offset']:['index','offset'];$values=[];foreach($keys as $k){$v=$_GET[$k]??'';if(!is_string($v)||!preg_match('/^(0|[1-9][0-9]{0,12})$/D',$v))throw new \InvalidArgumentException('Invalid export range.');$values[$k]=(int)$v;}
+                return $action==='manifest'?$store->manifest($id,$values['offset']):$store->batch($id,$values['index'],$values['offset']);
+            }
+            if($method!=='POST')return $fail(405,'Unsupported export method.');
+            if($id&&$action==='step'){
+                $state=$store->status($id);if(($state['snapshotMode']??null)==='maintenance'&&!ConnectionKey::permits($record,'push'))return $fail(403,'Source pause requires Push permission. Cancel to resume the source.');
+                return $store->step($id,static fn($p,array $filters=[])=>DatabaseExporter::write($wpdb,$p,null,40,$filters),$wpdb);
+            }
+            if($id)return $fail(404,'Unknown export operation.');
+            $raw=file_get_contents('php://input',false,null,0,524289);if(strlen($raw)>524288)return $fail(413,'Export selections exceed 512 KiB.');$body=json_decode($raw,true,32,JSON_THROW_ON_ERROR);if(!is_array($body))throw new \InvalidArgumentException('JSON selections required.');
+            if(($body['snapshotMode']??null)==='maintenance'&&!ConnectionKey::permits($record,'push'))return $fail(403,'Source pause requires Push permission.');
+            $get=static fn($name)=>(string)$wpdb->get_var($wpdb->prepare("SELECT option_value FROM `{$wpdb->options}` WHERE option_name=%s",$name));
+            $plugins=@unserialize($get('active_plugins'),['allowed_classes'=>false]);$plugins=is_array($plugins)?$plugins:[];
+            $active=['themes'=>array_values(array_unique(array_filter([$get('template'),$get('stylesheet')]))),'plugins'=>array_values(array_unique(array_map(static fn($p)=>str_contains($p,'/')?strstr($p,'/',true):$p,array_filter($plugins,'is_string'))))];
+            return $store->create($body,['url'=>rtrim($get('home'),'/'),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version,'abspath'=>rtrim(ABSPATH,'/')],$active);
+        }catch(\Throwable $e){http_response_code($e instanceof \InvalidArgumentException?400:409);$error=TransferImport::safeError($e,'exporting');$error['code']='zoer_export_blocked';return $error;}
     }
     /** POST /imports/{id}/batch. Octet-stream and multipart bodies are streamed from
      * php://input or the uploaded part in bounded pieces, never read whole; the JSON
@@ -175,6 +209,21 @@ final class Plugin {
             if($h)fclose($h);
         }
     }
+    private static function statusView(?array $record):array {
+        global $wpdb;
+            require_once __DIR__.'/BatchUpload.php';
+            $storage=self::storageStatus(); $ready=$storage['ready'];
+
+            $private=self::storageRoot();
+            $importReady=ImportAdmin::ready($private,ABSPATH);
+            $capabilities=['pagedExport'=>true,'connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'selectivePush'=>true,'artifactReuse'=>function_exists('link'), 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady];
+            // API version 2 (0.4.0). Import-side flags describe the protocol implemented by this version.
+            // Batched upload (C1): 256 KiB blocks packed per request; see BatchUpload.
+            $capabilities['largeTransfer']=true;$capabilities['blockDigestExport']=true;$capabilities['resumableDatabaseExport']=$importReady;
+            $capabilities['batchUpload']=true;$capabilities['batchDeflate']=function_exists('inflate_init')&&function_exists('inflate_add');
+            foreach(['replacementRules','replacementVariants','reviewPause','createTables','authorMapping','keepActivePlugins','lateFence','importPauseResume','importCleanup','importList','siteReplace','cachePurge','databaseFilters','resourceModes','mediaSince','diagnostics','safeErrors'] as $capability)$capabilities[$capability]=true;
+            return ['version' => '0.5.0', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'transferLimits'=>['manifestMaxBytes'=>8388608,'maxFileBytes'=>TransferStorage::FILE_BYTES,'quotaBytes'=>TransferStorage::quota(),'reserveBytes'=>TransferStorage::RESERVE_BYTES],'batchLimits'=>BatchUpload::limits()];
+    }
     public static function routes(): void {
         $register = static function ($path, $method, $handler) {
             register_rest_route('zoer-connect/v1', $path, [
@@ -211,22 +260,10 @@ final class Plugin {
                 $result=self::earlyImportRecovery($r->get_route());$status=http_response_code();return new \WP_REST_Response($result,$status>=400?$status:200,['Cache-Control'=>'no-store']);
             }]);
         }
-        $register('/status', 'GET', static function () {
-            require_once __DIR__.'/BatchUpload.php';
-            $storage=self::storageStatus(); $ready=$storage['ready'];
-            $record=get_option(ConnectionKey::OPTION,null);
-            $private=self::storageRoot();
-            $importReady=ImportAdmin::ready($private,ABSPATH);
-            $capabilities=['pagedExport'=>true,'connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'selectivePush'=>true,'artifactReuse'=>function_exists('link'), 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady];
-            // API version 2 (0.4.0). Import-side flags describe the protocol implemented by this version.
-            // Batched upload (C1): 256 KiB blocks packed per request; see BatchUpload.
-            $capabilities['batchUpload']=true;$capabilities['batchDeflate']=function_exists('inflate_init')&&function_exists('inflate_add');
-            foreach(['replacementRules','replacementVariants','reviewPause','createTables','authorMapping','keepActivePlugins','lateFence','importPauseResume','importCleanup','importList','siteReplace','cachePurge','databaseFilters','resourceModes','mediaSince','diagnostics','safeErrors'] as $capability)$capabilities[$capability]=true;
-            return ['version' => '0.4.0', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'batchLimits'=>BatchUpload::limits()];
-        });
-        $register('/diagnostics', 'GET', static function(){global $wpdb;return Diagnostics::collect($wpdb);});
-        $register('/exports/paged', 'POST', static function($r){global $wpdb,$wp_version;$b=$r->get_json_params();if(!is_array($b))throw new \InvalidArgumentException('JSON selections required.');return self::exports(true)->create($b,['url'=>untrailingslashit(home_url()),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version,'abspath'=>untrailingslashit(ABSPATH)],self::activeResources());});
-        $register('/exports/paged/(?P<id>[a-f0-9]{32})/step','POST',static function($r){global $wpdb;return self::exports(true)->step($r['id'],static fn($p,array $filters=[])=>DatabaseExporter::write($wpdb,$p,null,40,$filters));});
+        $register('/status', 'GET', static fn()=>self::statusView(get_option(ConnectionKey::OPTION,null)));
+        $register('/diagnostics','GET',static function(){global $wpdb;return Diagnostics::collect($wpdb);});
+        $register('/exports/paged', 'POST', static function($r){global $wpdb,$wp_version;$b=$r->get_json_params();if(!is_array($b))throw new \InvalidArgumentException('JSON selections required.');if(($b['snapshotMode']??null)==='maintenance'&&empty($_SERVER['HTTP_X_ZOER_CONNECTION']))throw new \InvalidArgumentException('Source pause requires a connection key.');return self::exports(true)->create($b,['url'=>untrailingslashit(home_url()),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version,'abspath'=>untrailingslashit(ABSPATH)],self::activeResources());});
+        $register('/exports/paged/(?P<id>[a-f0-9]{32})/step','POST',static function($r){global $wpdb;return self::exports(true)->step($r['id'],static fn($p,array $filters=[])=>DatabaseExporter::write($wpdb,$p,null,40,$filters),$wpdb);});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})/manifest','GET',static function($r){$o=$r['offset'];if(!is_string($o)||!preg_match('/^(0|[1-9][0-9]{0,6})$/D',$o))throw new \InvalidArgumentException('Invalid manifest offset.');return self::exports(true)->manifest($r['id'],(int)$o);});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})/batch','GET',static function($r){foreach(['index','offset'] as $k)if(!is_string($r[$k])||!preg_match('/^(0|[1-9][0-9]{0,12})$/D',$r[$k]))throw new \InvalidArgumentException('Invalid export range.');return self::exports(true)->batch($r['id'],(int)$r['index'],(int)$r['offset']);});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})','DELETE',static fn($r)=>self::exports(true)->cancel($r['id']));
@@ -271,7 +308,7 @@ final class Plugin {
     }
     public static function admin(): void {
         if (!current_user_can('manage_options')) return;
-        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.4.0 — WordPress transfers and recovery.</p>';
+        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.5.0 — WordPress transfers and recovery.</p>';
         echo '<p>Imports require explicit destination setup and Push permission. Review the destination and selected resources in Zoer before importing.</p>';
         ConnectionAdmin::render();
         ExportAdmin::render();

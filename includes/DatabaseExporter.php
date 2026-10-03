@@ -26,7 +26,7 @@ final class DatabaseExporter {
     }
     /** Row filters in WP Migrate style. Dependent rows are dropped only when their parent row is excluded, so
      * orphaned meta, comments without a post and link-category relationships keep 0.3.14 behaviour. */
-    private static function where(string $table,string $prefix,array $f,array $present,bool $self=false,bool $legacy=false): string {
+    public static function where(string $table,string $prefix,array $f,array $present,bool $self=false,bool $legacy=false): string {
         $list=static fn(array $v)=>$v?"'".implode("','",$v)."'":'';
         $keep=[];
         if($f['postTypes']!==null)$keep[]=$f['postTypes']?'post_type IN ('.$list($f['postTypes']).')':'0=1';
@@ -53,7 +53,7 @@ final class DatabaseExporter {
         if($table===$prefix.'commentmeta'&&$droppedComment&&isset($present[$prefix.'comments']))$where[]="comment_id NOT IN (SELECT comment_ID FROM `{$prefix}comments` WHERE ".implode(' OR ',$droppedComment).')';
         return $where?' WHERE '.implode(' AND ',$where):'';
     }
-    private static function ddl(string $sql): string {return (string)preg_replace('/ AUTO_INCREMENT=[0-9]+(?= |$)/','',$sql);}
+    public static function ddl(string $sql): string {return (string)preg_replace('/ AUTO_INCREMENT=[0-9]+(?= |$)/','',$sql);}
     /** Returns the exported table suffixes (names after the prefix). Empty $filters
      * means `database:true`: the 0.3.14 export; a filter object is never empty once normalized. */
     public static function write($db, string $destination, ?callable $clock = null, float $budgetSeconds = 40, array $filters = [], bool $selfSnapshot = false): array {

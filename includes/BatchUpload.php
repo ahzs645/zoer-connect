@@ -90,7 +90,8 @@ final class BatchUpload {
         $out=[];
         foreach($spans as $span){
             if(!is_array($span)||!array_is_list($span)||count($span)!==$width)throw new \InvalidArgumentException('Invalid batch span.');
-            foreach($span as $n)if(!is_int($n)||$n<0||$n>2147483648)throw new \InvalidArgumentException('Invalid batch span.');
+            foreach($span as $i=>$n)if(!is_int($n)||$n<0||$n>($i===1?TransferStorage::FILE_BYTES:($i===0?99999:self::HARD_MAX)))throw new \InvalidArgumentException('Invalid batch span.');
+            if($span[1]+$span[2]>TransferStorage::FILE_BYTES)throw new \InvalidArgumentException('Invalid batch span.');
             if($span[2]<1||($width===4&&$span[3]<1))throw new \InvalidArgumentException('Invalid batch span.');
             $out[]=[$span[0],$span[1],$span[2],$span[3]??$span[2]];
         }

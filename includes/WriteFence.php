@@ -6,7 +6,7 @@ namespace ZoerConnect;
  * deployment policy; an HTTP maintenance flag cannot fence direct SQL clients.
  */
 final class WriteFence {
-    private const SOURCE_HASH='bdff5d75aaf6b2ace3348d59016098daef717ad37b00f98373e065acce8d57ed';
+    private const SOURCE_HASH='c769b28d90ce4fc05f43433003300186b00abe3e3f647c087bd6b3ad59f3ab9a';
     public static function runtimeVerified(): bool {
         $source=@file_get_contents(__FILE__);
         if($source===false)return false;
@@ -114,6 +114,27 @@ final class WriteFence {
             if(file_put_contents($tmp,$json)!==strlen($json)||!chmod($tmp,0600)||!rename($tmp,$this->private.'/write-fence.json'))throw new \RuntimeException('Cannot persist write fence.');
         });
     }
+    /** Read-only exports may expire safely: their unfinished bytes are never published.
+     * Imports still require explicit verified completion/restoration before release. */
+    public function reserveExport(string $id,string $binding):void {
+        $this->reserve($id,$binding);
+        $this->control(function()use($id,$binding){$this->owner($id,$binding);$s=$this->marker();
+            if(isset($s['kind'])&&$s['kind']!=='export')throw new \RuntimeException('Another transfer owns the fence.');
+            $s['kind']='export';$s['expiresAt']=min($s['createdAt']+86400,time()+3600);
+            $path=$this->private.'/write-fence.tmp';$json=json_encode($s,JSON_THROW_ON_ERROR);
+            if(file_put_contents($path,$json)!==strlen($json)||!chmod($path,0600)||!rename($path,$this->private.'/write-fence.json'))throw new \RuntimeException('Cannot renew source pause.');
+        });
+    }
+    public function owns(string $id,string $binding):bool {$s=$this->marker();return $s!==null&&($s['id']??null)===$id&&hash_equals($s['binding']??'',$binding);}
+    public function expireExport():void {
+        $s=$this->marker();if(($s['kind']??null)!=='export'||!is_int($s['expiresAt']??null)||$s['expiresAt']>time())return;
+        $this->control(function(){
+            $s=$this->marker();if(($s['kind']??null)!=='export'||!is_int($s['expiresAt']??null)||$s['expiresAt']>time())return;
+            if(!$this->installed())throw new \RuntimeException('MU fence changed.');
+            $h=fopen($this->private.'/write-fence.requests','c');if(!$h||!flock($h,LOCK_EX|LOCK_NB)){if($h)fclose($h);throw new \RuntimeException('Source export is still draining.');}
+            try{if(!unlink($this->private.'/write-fence.json'))throw new \RuntimeException('Cannot release expired source pause.');}finally{flock($h,LOCK_UN);fclose($h);}
+        });
+    }
     public function exclusive(string $id,string $binding,callable $fn) {
         $this->identity($id,$binding);
         return $this->control(function()use($id,$binding,$fn){
@@ -145,9 +166,9 @@ final class WriteFence {
         $route=$query['rest_route']??null;
         if ($route===null) {
             $path=parse_url((string)($server['REQUEST_URI']??''),PHP_URL_PATH);
-            if (is_string($path)&&preg_match('~/wp-json(/zoer-connect/v1/imports(?:/.*)?)$~D',$path,$m))$route=$m[1];
+            if (is_string($path)&&preg_match('~/wp-json(/zoer-connect/v1/(?:imports|exports/paged|status)(?:/.*)?)$~D',$path,$m))$route=$m[1];
         }
-        return is_string($route)&&preg_match('~^/zoer-connect/v1/imports(?:/[a-f0-9]{32}(?:/[a-z-]+)?)?/?$~D',$route)?rtrim($route,'/'):null;
+        return is_string($route)&&preg_match('~^/zoer-connect/v1/(?:status|imports(?:/[a-f0-9]{32}(?:/[a-z-]+)?)?|exports/paged(?:/[a-f0-9]{32}(?:/(?:step|manifest|batch))?)?)/?$~D',$route)?rtrim($route,'/'):null;
     }
     /** Runs during MU loading, before imported regular plugins or themes execute. */
     public static function boot(string $private,string $root,callable $dispatch): void {
@@ -155,6 +176,10 @@ final class WriteFence {
         try {
             $fence=new self($private,$root);
             if (!$fence->installed()) throw new \RuntimeException('MU fence verification failed.');
+            $fence->expireExport();
+            // Application passwords need normal WordPress authentication. Allow that
+            // path only while no source/destination is paused; recovery uses keys.
+            if($route!==null&&!str_starts_with($route,'/zoer-connect/v1/imports')&&empty($_SERVER['HTTP_X_ZOER_CONNECTION'])&&$fence->marker()===null)$route=null;
             if ($route!==null) {
                 // Authentication is compulsory in this protected handler. Do not
                 // defer to rest_api_init, which runs after ordinary plugin code.

@@ -46,6 +46,11 @@ try{
  reject(fn()=>BatchUpload::json(['v'=>1,'spans'=>[[0,0,5]]]),'JSON span without data refused','Invalid batch span');
  reject(fn()=>BatchUpload::json(['v'=>2,'spans'=>[[0,0,5,'aGVsbG8=']]]),'JSON version 2 refused','Invalid batch header');
 
+ $high=BatchUpload::json(['v'=>1,'spans'=>[[0,2147745792,1,base64_encode('x')]]]);expect($high->spanList()[0][1]===2147745792,'batch offset above 2 GiB accepted');
+ $edge=BatchUpload::json(['v'=>1,'spans'=>[[0,4294967295,1,base64_encode('x')]]]);expect($edge->spanList()[0][1]===4294967295,'final byte within 4 GiB artifact accepted');
+ reject(fn()=>BatchUpload::json(['v'=>1,'spans'=>[[0,4294967296,1,'eA==']]]),'span crossing 4 GiB artifact refused','Invalid batch span');
+ reject(fn()=>BatchUpload::json(['v'=>1,'spans'=>[[100000,0,1,'eA==']]]),'artifact index beyond bounded manifest refused','Invalid batch span');
+ reject(fn()=>BatchUpload::json(['v'=>1,'spans'=>[[0,0,67108865,'eA==']]]),'oversized raw span refused before allocation','Invalid batch span');
  // --- import 1: many small files, a multi-block file, the database, a legacy file ----------
  $legacyDump=snapshot(source(),$base.'/legacy.sql');$sql=file_get_contents($base.'/legacy.sql');
  $small=[];for($n=0;$n<240;$n++)$small['wp-content/uploads/batch/f-'.$n.'.txt']=$n%40===0?'':random_bytes(random_int(1,3000));

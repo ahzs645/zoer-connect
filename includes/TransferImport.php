@@ -92,7 +92,7 @@ final class TransferImport {
     }
     private static function claimed(string $table,array $prefixes): bool {foreach($prefixes as $prefix)if(str_starts_with($table,$prefix))return true;return false;}
     private function artifact(array $a,bool $database): array {
-        if(!is_int($a['bytes']??null)||$a['bytes']<0||$a['bytes']>($database||isset($a['chunkSha256'])?2147483648:33554432)||!preg_match('/^[a-f0-9]{64}$/D',$a['sha256']??''))throw new \InvalidArgumentException('Invalid artifact size or digest.');
+        if(!is_int($a['bytes']??null)||$a['bytes']<0||$a['bytes']>($database||isset($a['chunkSha256'])?TransferStorage::FILE_BYTES:33554432)||!preg_match('/^[a-f0-9]{64}$/D',$a['sha256']??''))throw new \InvalidArgumentException('Invalid artifact size or digest.');
         if(array_key_exists('expectedDestinationSha256',$a)&&$a['expectedDestinationSha256']!==null&&(!is_string($a['expectedDestinationSha256'])||!preg_match('/^[a-f0-9]{64}$/D',$a['expectedDestinationSha256'])))throw new \InvalidArgumentException('Invalid destination precondition.');
         if(!$database&&isset($a['chunkSha256']))ChunkedFilePublication::validate($a);
         if($database){
@@ -182,10 +182,11 @@ final class TransferImport {
                 $caps=is_string($caps)?@unserialize($caps,['allowed_classes'=>false]):null;
                 if(!is_int($admin)||$admin<1||!is_array($caps)||($caps['administrator']??false)!==true||!$this->db->get_var($this->db->prepare("SELECT ID FROM `{$this->db->users}` WHERE ID=%d",$admin)))throw new \InvalidArgumentException('Select a retained destination administrator for source author mapping.');
             }
-            if(disk_free_space($this->private)<array_sum(array_column($artifacts,'bytes'))*2+67108864)throw new \RuntimeException('Insufficient private backup space.');
+            $total=array_sum(array_column($artifacts,'bytes'));if($total>TransferStorage::quota())throw new \RuntimeException('Transfer exceeds its configured storage quota.');
+            if(disk_free_space($this->private)<$total*2+67108864)throw new \RuntimeException('Insufficient private backup space.');
             $id=$body['id']??bin2hex(random_bytes(16));$final=$this->dir($id);$dir=$this->private.'/.new-import-'.$id.'-'.bin2hex(random_bytes(8));if(!mkdir($dir,0700))throw new \RuntimeException('Cannot create import.');
             foreach($artifacts as $i=>$a){if(!mkdir($dir.'/artifact-'.$i,0700))throw new \RuntimeException('Cannot create artifact.');if(!$replace)file_put_contents($dir.'/artifact-'.$i.'/data','');}
-            $s=['id'=>$id,'phase'=>$replace?'snapshotting':'uploading','migrationMode'=>$shared?'shared-replacement':'verified-workers','target'=>$this->target,'owner'=>$this->owner,'sourceUrl'=>$replace?$this->target:$body['sourceUrl'],'sourcePrefix'=>$replace?$this->db->prefix:$body['sourcePrefix'],'originalUrls'=>$replace?[]:array_values(array_unique([$body['sourceUrl'],...($body['originalUrls']??[])])),'admin'=>$admin,'artifacts'=>$artifacts,'hasDb'=>$hasDb,'hasFiles'=>(bool)$files,'selectedPlugins'=>isset($body['resources']['plugins'])?$body['resources']['plugins']===true:(bool)array_filter($files,fn($f)=>str_starts_with($f['path'],'wp-content/plugins/')),'selectedThemes'=>isset($body['resources']['themes'])?$body['resources']['themes']===true:(bool)array_filter($files,fn($f)=>str_starts_with($f['path'],'wp-content/themes/')),'cursor'=>0,'tables'=>[],'createdAt'=>gmdate('c')];
+            $s=['id'=>$id,'phase'=>$replace?'snapshotting':'uploading','migrationMode'=>$shared?'shared-replacement':'verified-workers','target'=>$this->target,'owner'=>$this->owner,'largeTransfer'=>true,'sourceUrl'=>$replace?$this->target:$body['sourceUrl'],'sourcePrefix'=>$replace?$this->db->prefix:$body['sourcePrefix'],'originalUrls'=>$replace?[]:array_values(array_unique([$body['sourceUrl'],...($body['originalUrls']??[])])),'admin'=>$admin,'artifacts'=>$artifacts,'hasDb'=>$hasDb,'hasFiles'=>(bool)$files,'selectedPlugins'=>isset($body['resources']['plugins'])?$body['resources']['plugins']===true:(bool)array_filter($files,fn($f)=>str_starts_with($f['path'],'wp-content/plugins/')),'selectedThemes'=>isset($body['resources']['themes'])?$body['resources']['themes']===true:(bool)array_filter($files,fn($f)=>str_starts_with($f['path'],'wp-content/themes/')),'cursor'=>0,'tables'=>[],'createdAt'=>gmdate('c')];
             // A client that sends no options gets the 0.3.14 replacement rules byte-for-byte.
             $s+=['kind'=>$kind,'options'=>$options,'legacyReplacements'=>!isset($body['options']),'sourcePath'=>$sourcePath,'samples'=>[],'authors'=>null,'cleanedUp'=>false,'updatedAt'=>$s['createdAt'],'finishedAt'=>null];
             $s['binding']=hash('sha256',json_encode([$this->owner,$this->target,$body],JSON_THROW_ON_ERROR));
@@ -361,7 +362,7 @@ final class TransferImport {
         });
     }
     private function table(array $t): TableStage {return new TableStage($this->db,$t['name'],$t['id'],true,($t['created']??false)||($t['schemaReplaced']??false)?['name'=>$t['source'],'schema'=>$t['schema']]:null);}
-    private function publication(array $s,int $index): FilePublication|ChunkedFilePublication {$class=isset($s['artifacts'][$index]['chunkSha256'])?ChunkedFilePublication::class:FilePublication::class;return new $class($this->root,$this->dir($s['id']).'/artifact-'.$index);}
+    private function publication(array $s,int $index): FilePublication|ChunkedFilePublication {$class=isset($s['artifacts'][$index]['chunkSha256'])?ChunkedFilePublication::class:FilePublication::class;return $class===ChunkedFilePublication::class?new ChunkedFilePublication($this->root,$this->dir($s['id']).'/artifact-'.$index,($s['largeTransfer']??false)?32:1):new FilePublication($this->root,$this->dir($s['id']).'/artifact-'.$index);}
     /** Repeatable invalidation occurs while requests remain paused. A failed
      * cache backend leaves recovery available and never silently reopens. */
     private function reopen(array $s): void {
