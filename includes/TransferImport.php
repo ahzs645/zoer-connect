@@ -43,7 +43,13 @@ final class TransferImport {
     }
     /** $anyOwner is only for WordPress administrator cleanup after key rotation. */
     private function read(string $id,bool $anyOwner=false): array {
-        $s=json_decode(file_get_contents($this->dir($id).'/state.json'),true,512,JSON_THROW_ON_ERROR);
+        // Missing journals must not emit PHP warnings into the REST response on
+        // development/shared hosts with display_errors enabled. Keep the native
+        // failure generic, including when the journal contains a JSON scalar.
+        $raw=@file_get_contents($this->dir($id).'/state.json');
+        if($raw===false)throw new \UnexpectedValueException('Import state unavailable.');
+        $s=json_decode($raw,true,512,JSON_THROW_ON_ERROR);
+        if(!is_array($s))throw new \UnexpectedValueException('Invalid import state.');
         if(($s['target']??null)!==$this->target||(!$anyOwner&&!hash_equals($this->owner,$s['owner']??'')))throw new \RuntimeException('Import credential generation or destination changed.');
         return $s;
     }

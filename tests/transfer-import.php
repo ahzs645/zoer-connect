@@ -11,6 +11,13 @@ $target='https://zoer-connect-transfer-peer.wp.k8s.ahmad.sh';$owner=hash('sha256
 $db=new class($target){public $prefix='wp_';public $options='wp_options';public $last_error='';public $url;public array $savedOptions=[];public function __construct($url){$this->url=$url;}public function prepare($sql,...$args){return $sql;}public function get_var($sql){return $this->url;}public function replace($table,$row){$this->savedOptions[$row['option_name']]=$row['option_value'];return 1;}};
 $new=fn($key=null)=>new TransferImport($db,$base.'/public',$base.'/private',$key??$owner,$target,true);
 try{
+ // Even when PHP displays warnings, missing journals must leave a clean JSON
+ // response for the API handler and never reveal the private storage path.
+ $warnings=[];set_error_handler(static function($level,$message)use(&$warnings){if(error_reporting()&$level)$warnings[]=$message;return true;});
+ try{$new()->status(str_repeat('f',32));throw new RuntimeException('Missing journal accepted.');}
+ catch(UnexpectedValueException $e){check(TransferImport::safeError($e)['message']==='Import could not advance. Retry or roll back using the same connection.','Missing journal error was not generic.');}
+ finally{restore_error_handler();}
+ check($warnings===[],'Missing journal emitted a private-path warning.');
  rejects(fn()=>new TransferImport($db,$base.'/public',$base.'/private',$owner,$target));
  rejects(fn()=>new TransferImport($db,$base.'/public',$base.'/private',$owner,'https://user:password@example.test',true));
  // Generic destination support, exercised only against this temporary fake DB/tree.
