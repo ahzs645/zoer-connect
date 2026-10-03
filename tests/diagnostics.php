@@ -57,7 +57,7 @@ try{
  check($response->status===200&&$response->headers['Cache-Control']==='no-store','diagnostics served uncached');
  check(array_keys($r)===['wordpress','php','database','postTypes','themes','plugins','muPlugins','dropins','warnings','pluginUpdate'],'diagnostics top-level shape');
  check(array_keys($r['wordpress'])===['version','prefix','home','siteurl','abspath','contentDir','uploadsDir','locale','permalinkStructure','blogPublic']&&$r['wordpress']['abspath']===$base.'/site'&&$r['wordpress']['siteurl']==='http://source.example'&&$r['wordpress']['blogPublic']===false&&$r['wordpress']['version']==='6.8.1','wordpress facts');
- check(array_keys($r['php'])===['version','memoryLimit','maxExecutionTime','postMaxSize','uploadMaxFilesize','extensions']&&array_keys($r['php']['extensions'])===['zip','openssl','curl','mysqli']&&is_int($r['php']['maxExecutionTime']),'php facts');
+ check(array_keys($r['php'])===['version','sapi','openBasedirRestricted','displayErrors','displayStartupErrors','functions','memoryLimit','maxExecutionTime','postMaxSize','uploadMaxFilesize','extensions']&&array_keys($r['php']['extensions'])===['zip','openssl','curl','mysqli']&&is_int($r['php']['maxExecutionTime']),'php facts');
  $db=$r['database'];check($db['server']==='mariadb'&&$db['version']==='11.4.3'&&$db['lowerCaseTableNames']===0&&$db['charset']==='utf8mb4','database server facts');
  $tables=array_column($db['tables'],null,'name');
  check(array_keys($db['tables'][0])===['name','suffix','prefixed','engine','rows','bytes','primaryKey','foreignKeys','triggers'],'table entry shape');
@@ -73,8 +73,10 @@ try{
  $messages=implode("\n",array_column($r['warnings'],'message'));
  check(str_contains($messages,'Wordfence')&&str_contains($messages,'LiteSpeed Cache')&&str_contains($messages,'wp_Mixed')&&str_contains($messages,'wp_legacy')&&!str_contains($messages,'other_x'),'warnings name the detected plugins and prefixed tables only');
  check(!array_filter($wpdb->queries,fn($q)=>preg_match('/\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE)\b/',$q)),'diagnostics issue read-only queries');
- $clean=$r;$clean['plugins']=[];$clean['dropins']=[];$clean['wordpress']['blogPublic']=true;$clean['wordpress']['home']=$clean['wordpress']['siteurl']='https://source.example';$clean['database']['tables']=[$tables['wp_posts']];$clean['database']['tables'][0]['foreignKeys']=false;
+ $clean=$r;$clean['php']['displayErrors']=$clean['php']['displayStartupErrors']=false;$clean['plugins']=[];$clean['dropins']=[];$clean['wordpress']['blogPublic']=true;$clean['wordpress']['home']=$clean['wordpress']['siteurl']='https://source.example';$clean['database']['tables']=[$tables['wp_posts']];$clean['database']['tables'][0]['foreignKeys']=false;
  check(Diagnostics::warnings($clean)===[],'healthy site has no warnings');
+ check(is_bool($r['php']['openBasedirRestricted'])&&$r['php']['sapi']===PHP_SAPI&&$r['php']['functions']['inflate_init']===function_exists('inflate_init'),'bounded hosting facts without private configuration paths');
+ $errors=$clean;$errors['php']['displayStartupErrors']=true;check(array_column(Diagnostics::warnings($errors),'code')===['php_display_errors'],'startup error display warning');
  check(array_column(Diagnostics::warnings($clean,'/srv/wordfence-waf.php'),'code')===['firewall_plugin'],'auto_prepend firewall detected');
  $options['active_plugins']=[];$clean['plugins']=[['slug'=>'breeze','active'=>false]];check(Diagnostics::warnings($clean)===[],'inactive cache plugin ignored');
  $clean['database']['lowerCaseTableNames']=1;$clean['wordpress']['prefix']='WP_';check(array_column(Diagnostics::warnings($clean),'code')===['mixed_case_tables'],'mixed-case prefix with lower_case_table_names warned');

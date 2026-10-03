@@ -12,7 +12,8 @@ final class Diagnostics {
         $prefix=(string)$db->prefix;$home=untrailingslashit((string)get_option('home'));$siteurl=untrailingslashit((string)get_option('siteurl'));
         $uploads=function_exists('wp_upload_dir')?wp_upload_dir(null,false):[];
         $wordpress=['version'=>(string)$wp_version,'prefix'=>$prefix,'home'=>$home,'siteurl'=>$siteurl,'abspath'=>untrailingslashit(ABSPATH),'contentDir'=>untrailingslashit(defined('WP_CONTENT_DIR')?WP_CONTENT_DIR:ABSPATH.'wp-content'),'uploadsDir'=>untrailingslashit((string)($uploads['basedir']??'')),'locale'=>(string)get_locale(),'permalinkStructure'=>(string)get_option('permalink_structure',''),'blogPublic'=>(string)get_option('blog_public','1')!=='0'];
-        $php=['version'=>PHP_VERSION,'memoryLimit'=>(string)ini_get('memory_limit'),'maxExecutionTime'=>(int)ini_get('max_execution_time'),'postMaxSize'=>(string)ini_get('post_max_size'),'uploadMaxFilesize'=>(string)ini_get('upload_max_filesize'),'extensions'=>['zip'=>extension_loaded('zip'),'openssl'=>extension_loaded('openssl'),'curl'=>extension_loaded('curl'),'mysqli'=>extension_loaded('mysqli')]];
+        $iniFlag=static fn(string $name):bool=>!in_array(strtolower(trim((string)ini_get($name))),['','0','off','false','none'],true);
+        $php=['version'=>PHP_VERSION,'sapi'=>PHP_SAPI,'openBasedirRestricted'=>trim((string)ini_get('open_basedir'))!=='','displayErrors'=>$iniFlag('display_errors'),'displayStartupErrors'=>$iniFlag('display_startup_errors'),'functions'=>array_combine(['inflate_init','inflate_add','gzcompress','fsync','posix_kill','proc_open'],array_map('function_exists',['inflate_init','inflate_add','gzcompress','fsync','posix_kill','proc_open'])),'memoryLimit'=>(string)ini_get('memory_limit'),'maxExecutionTime'=>(int)ini_get('max_execution_time'),'postMaxSize'=>(string)ini_get('post_max_size'),'uploadMaxFilesize'=>(string)ini_get('upload_max_filesize'),'extensions'=>['zip'=>extension_loaded('zip'),'openssl'=>extension_loaded('openssl'),'curl'=>extension_loaded('curl'),'mysqli'=>extension_loaded('mysqli')]];
         $database=self::database($db,$prefix);
         $postTypes=[];
         if(in_array($prefix.'posts',array_column($database['tables'],'name'),true)){
@@ -53,6 +54,7 @@ final class Diagnostics {
     /** Pure warning rules over a collected report, so fixtures can exercise every code. */
     public static function warnings(array $r,string $autoPrepend=''): array {
         $warnings=[];$add=static function(string $code,string $message)use(&$warnings){$warnings[]=['code'=>$code,'message'=>$message];};
+        if(($r['php']['displayErrors']??false)||($r['php']['displayStartupErrors']??false))$add('php_display_errors','PHP displays errors in HTTP responses. Turn off display_errors and display_startup_errors in the host PHP configuration before transfers; oversized requests can otherwise fail before Zoer Connect handles them.');
         $active=array_column(array_filter($r['plugins'],static fn($p)=>$p['active']),'slug');
         $firewalls=array_values(array_unique(array_intersect_key(self::FIREWALLS,array_flip($active))));
         if(preg_match('/wordfence-waf|ninjafirewall/i',$autoPrepend))$firewalls[]='PHP auto_prepend_file firewall';
