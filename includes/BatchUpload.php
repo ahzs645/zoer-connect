@@ -66,7 +66,7 @@ final class BatchUpload {
         try{$header=strlen($raw)===$h?json_decode($raw,true,8,JSON_THROW_ON_ERROR):null;}catch(\JsonException $e){$header=null;}
         if(!is_array($header)||array_is_list($header)||array_diff(array_keys($header),['v','spans','payloadBytes','enc'])||($header['v']??null)!==1||!is_int($header['payloadBytes']??null)||$header['payloadBytes']<1||!in_array($header['enc']??null,[null,'deflate'],true))throw new \InvalidArgumentException('Invalid batch header.');
         $b->deflate=($header['enc']??null)==='deflate';
-        if($b->deflate&&!function_exists('inflate_init'))throw new \InvalidArgumentException('Deflate is unavailable on this server.');
+        if($b->deflate&&(!function_exists('inflate_init')||!function_exists('inflate_add')))throw new \InvalidArgumentException('Deflate is unavailable on this server.');
         $b->spans=self::spans($header['spans']??null,$b->deflate?4:3);
         $wire=0;foreach($b->spans as $span)$wire+=$span[3];
         if($wire!==$header['payloadBytes'])throw new \InvalidArgumentException('Batch payloadBytes does not match its spans.');
@@ -79,7 +79,7 @@ final class BatchUpload {
     public static function json(array $body): self {
         if(array_is_list($body)||array_diff(array_keys($body),['v','spans','enc'])||($body['v']??null)!==1||!is_array($body['spans']??null)||!in_array($body['enc']??null,[null,'deflate'],true))throw new \InvalidArgumentException('Invalid batch header.');
         $b=new self();$b->inline=[];$shape=[];$b->deflate=($body['enc']??null)==='deflate';$width=$b->deflate?4:3;
-        if($b->deflate&&!function_exists('inflate_init'))throw new \InvalidArgumentException('Deflate is unavailable on this server.');
+        if($b->deflate&&(!function_exists('inflate_init')||!function_exists('inflate_add')))throw new \InvalidArgumentException('Deflate is unavailable on this server.');
         foreach($body['spans'] as $span){if(!is_array($span)||!array_is_list($span)||count($span)!==$width+1||!is_string($span[$width]))throw new \InvalidArgumentException('Invalid batch span.');$b->inline[]=$span[$width];$shape[]=array_slice($span,0,$width);}
         $b->spans=self::spans($shape,$width);
         return $b;

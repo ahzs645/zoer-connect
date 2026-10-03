@@ -39,6 +39,8 @@ test: lint
 	php -d disable_functions=link tests/transfer-import.php
 	php tests/transfer-import-blocks.php
 	php tests/batch-upload.php
+	php -d disable_functions=inflate_init tests/deflate-availability.php
+	php -d disable_functions=inflate_add tests/deflate-availability.php
 	php tests/table-stage.php
 	php tests/table-create.php
 	php tests/import-options.php

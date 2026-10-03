@@ -220,7 +220,7 @@ final class Plugin {
             $capabilities=['pagedExport'=>true,'connectionKey'=>true,'stageFiles' => true, 'pull'=>true, 'publish' => $importReady, 'selectivePush'=>true,'artifactReuse'=>function_exists('link'), 'chunkedFilePublication'=>true, 'databaseImport' => $importReady, 'rollback' => $importReady];
             // API version 2 (0.4.0). Import-side flags describe the protocol implemented by this version.
             // Batched upload (C1): 256 KiB blocks packed per request; see BatchUpload.
-            $capabilities['batchUpload']=true;$capabilities['batchDeflate']=function_exists('inflate_init');
+            $capabilities['batchUpload']=true;$capabilities['batchDeflate']=function_exists('inflate_init')&&function_exists('inflate_add');
             foreach(['replacementRules','replacementVariants','reviewPause','createTables','authorMapping','keepActivePlugins','lateFence','importPauseResume','importCleanup','importList','siteReplace','cachePurge','databaseFilters','resourceModes','mediaSince','diagnostics','safeErrors'] as $capability)$capabilities[$capability]=true;
             return ['version' => '0.4.0', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'batchLimits'=>BatchUpload::limits()];
         });
