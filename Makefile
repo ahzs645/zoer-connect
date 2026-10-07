@@ -59,4 +59,5 @@ test: lint
 # Creates ZIPs for development/prerelease checks; stable publication requires qualification.
 test-package:
 	python3 tests/release_check_test.py
+	python3 tests/update_manifest_test.py
 	python3 tests/build_test.py

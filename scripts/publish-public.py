@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy a qualified ZIP into the public, read-only WordPress update feed."""
+"""Publish the final compatibility bridge for connectors using the old feed."""
 from pathlib import Path
 import hashlib
 import json
@@ -11,6 +11,7 @@ import sys
 root = Path(__file__).resolve().parents[1]
 public = Path(sys.argv[1]).resolve()
 version = re.search(r"Version: ([0-9]+\.[0-9]+\.[0-9]+)", (root / "zoer-connect.php").read_text()).group(1)
+assert version == '0.5.2', 'Legacy feed is frozen at the 0.5.2 migration bridge'
 archive = root / "dist" / f"zoer-connect-{version}.zip"
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 receipt = json.loads((root / "releases" / f"{version}.json").read_text())

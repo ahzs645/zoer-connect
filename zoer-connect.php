@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Zoer Connect
  * Description: Authenticated WordPress transfers and verified recovery for Zoer.
- * Version: 0.5.1
- * Update URI: https://github.com/ahzs645/zoer-connect-releases
+ * Version: 0.5.2
+ * Update URI: https://github.com/ahzs645/zoer-connect
  * Requires at least: 6.5
  * Requires PHP: 8.1
  * License: GPL-2.0-or-later
