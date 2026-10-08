@@ -50,6 +50,7 @@ test: lint
 	php tests/table-stage.php
 	php tests/table-create.php
 	php tests/import-options.php
+	php tests/import-compact.php
 	php tests/replace-kind.php
 	php tests/import-fixes.php
 	php tests/import-admin.php

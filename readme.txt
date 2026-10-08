@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.5.2
+Stable tag: 0.5.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,9 @@ Large local exports run in a DDEV CLI worker independently of HTTP time limits. 
 Upload and activate the plugin. Open Tools > Zoer Connect to generate connection info and configure direction permissions. New connection keys prepare shared-hosting migration automatically. If storage or hosting compatibility blocks preparation, resolve the administrator diagnostics and save Push permissions to retry; existing incomplete setups retain manual recovery controls. Private storage must be outside the public document root. Deactivation/uninstall preserve private journals; do not remove the connector or MU bootstrap during an active transfer.
 
 == Changelog ==
+
+= 0.5.3 (development candidate) =
+Optional compact import acknowledgements reduce repeated response bytes while retaining detailed status, exact destination binding, complete private journals, verification and guarded rollback. Clients negotiate compactImportResponses before requesting view=compact. This source candidate is not a published update or a hosting qualification.
 
 = 0.5.2 =
 Discover qualified updates and download checksum-verified ZIPs directly from the public Zoer Connect GitHub Releases. This is the final bridge update offered through the legacy releases feed; existing connector keys, settings and transfer journals are preserved.

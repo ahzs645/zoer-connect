@@ -2,7 +2,7 @@
 namespace ZoerConnect;
 
 final class Plugin {
-    public const VERSION = '0.5.2';
+    public const VERSION = '0.5.3';
     private static bool $applicationPassword = false;
     public static function boot(): void {
         add_action('application_password_did_authenticate', static function () { self::$applicationPassword = true; });
@@ -119,7 +119,7 @@ final class Plugin {
             self::store();
             $root=self::storageRoot();
             $target=rtrim((string)get_option('home'),'/');
-            $import=new TransferImport($wpdb,ABSPATH,$root,$record['hash'],$target,true);
+            $import=new TransferImport($wpdb,ABSPATH,$root,$record['hash'],$target,true,($_GET['view']??null)==='compact');
             $method=$_SERVER['REQUEST_METHOD']??'GET';$action=$m[2]??null;
             if($method==='GET'&&!$id)return $import->list();
             if($method==='GET'&&$id&&!$action)return ($_GET['view']??null)==='upload'?$import->upload($id):$import->status($id);
@@ -221,8 +221,9 @@ final class Plugin {
             // Batched upload (C1): 256 KiB blocks packed per request; see BatchUpload.
             $capabilities['largeTransfer']=true;$capabilities['blockDigestExport']=true;$capabilities['resumableDatabaseExport']=$importReady;
             $capabilities['batchUpload']=true;$capabilities['batchDeflate']=function_exists('inflate_init')&&function_exists('inflate_add');
+            $capabilities['compactImportResponses']=true;
             foreach(['replacementRules','replacementVariants','reviewPause','createTables','authorMapping','keepActivePlugins','lateFence','importPauseResume','importCleanup','importList','siteReplace','cachePurge','databaseFilters','resourceModes','mediaSince','diagnostics','safeErrors'] as $capability)$capabilities[$capability]=true;
-            return ['version' => '0.5.2', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'transferLimits'=>['manifestMaxBytes'=>8388608,'maxFileBytes'=>TransferStorage::FILE_BYTES,'quotaBytes'=>TransferStorage::quota(),'reserveBytes'=>TransferStorage::RESERVE_BYTES],'batchLimits'=>BatchUpload::limits()];
+            return ['version' => '0.5.3', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'transferLimits'=>['manifestMaxBytes'=>8388608,'maxFileBytes'=>TransferStorage::FILE_BYTES,'quotaBytes'=>TransferStorage::quota(),'reserveBytes'=>TransferStorage::RESERVE_BYTES],'batchLimits'=>BatchUpload::limits()];
     }
     public static function routes(): void {
         $register = static function ($path, $method, $handler) {
@@ -308,7 +309,7 @@ final class Plugin {
     }
     public static function admin(): void {
         if (!current_user_can('manage_options')) return;
-        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.5.2 — WordPress transfers and recovery.</p>';
+        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.5.3 — WordPress transfers and recovery.</p>';
         echo '<p>Imports require explicit destination setup and Push permission. Review the destination and selected resources in Zoer before importing.</p>';
         ConnectionAdmin::render();
         ExportAdmin::render();

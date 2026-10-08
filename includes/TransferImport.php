@@ -20,11 +20,14 @@ final class TransferImport {
     private string $owner;
     private string $target;
     private WriteFence $fence;
-    public function __construct($db,string $root,string $private,string $owner,string $target,bool $enabled=false) {
+    private bool $compactResponses;
+    public function __construct($db,string $root,string $private,string $owner,string $target,bool $enabled=false,bool $compactResponses=false) {
         if (!$enabled) throw new \RuntimeException('Public import requires explicit readiness and authorization.');
         if (!filter_var($target,FILTER_VALIDATE_URL)||!in_array(parse_url($target,PHP_URL_SCHEME),['http','https'],true)||parse_url($target,PHP_URL_USER)!==null||parse_url($target,PHP_URL_PASS)!==null||parse_url($target,PHP_URL_QUERY)!==null||parse_url($target,PHP_URL_FRAGMENT)!==null) throw new \InvalidArgumentException('Invalid destination URL.');
         new StageStore($private,[$root]);
         if (!preg_match('/^[a-f0-9]{64}$/D',$owner)||!preg_match('/^[A-Za-z0-9_]+$/D',$db->prefix)) throw new \InvalidArgumentException('Invalid import identity.');
+        if($compactResponses&&strlen($target)>2048)throw new \InvalidArgumentException('Compact responses require identities of at most 2048 bytes. Use the detailed API.');
+        $this->compactResponses=$compactResponses;
         $this->db=$db;$this->root=realpath($root);$this->abspath=rtrim($root,'/');$this->private=realpath($private);$this->owner=$owner;$this->target=$target;$this->fence=new WriteFence($private,$root);
     }
     public function installFence(): void {$this->fence->install();}
@@ -51,6 +54,9 @@ final class TransferImport {
         $s=json_decode($raw,true,512,JSON_THROW_ON_ERROR);
         if(!is_array($s))throw new \UnexpectedValueException('Invalid import state.');
         if(($s['target']??null)!==$this->target||(!$anyOwner&&!hash_equals($this->owner,$s['owner']??'')))throw new \RuntimeException('Import credential generation or destination changed.');
+        // Refuse an unsupported compact identity before a step can mutate anything;
+        // never truncate the URLs used by the caller to bind its destination.
+        if($this->compactResponses&&strlen($s['sourceUrl']??'')>2048)throw new \InvalidArgumentException('Compact responses require identities of at most 2048 bytes. Use the detailed API.');
         return $s;
     }
     private function recordError(string $id,\Throwable $e): void {
@@ -153,6 +159,7 @@ final class TransferImport {
             $shared=($body['migrationMode']??null)==='shared-replacement';
             if($shared?($body['replacementAccepted']??false)!==true:($body['wordpressOnlyWriters']??false)!==true)throw new \InvalidArgumentException('Confirm the selected migration policy.');
             $options=self::options($body['options']??null,$replace);
+            if($this->compactResponses&&is_string($body['sourceUrl']??null)&&strlen($body['sourceUrl'])>2048)throw new \InvalidArgumentException('Compact responses require identities of at most 2048 bytes. Use the detailed API.');
             if($replace){
                 foreach(['database','files','reuseImportId','originalUrls','sourceUrl','sourcePrefix','sourcePath','resources'] as $key)if(array_key_exists($key,$body))throw new \InvalidArgumentException('A replace import snapshots this site; omit transfer artifacts.');
             }elseif(!filter_var($body['sourceUrl']??'',FILTER_VALIDATE_URL)||!in_array(parse_url($body['sourceUrl'],PHP_URL_SCHEME),['http','https'],true)||$body['sourceUrl']===$this->target||!preg_match('/^[A-Za-z0-9_]+$/D',$body['sourcePrefix']??''))throw new \InvalidArgumentException('Invalid source identity.');
@@ -197,7 +204,8 @@ final class TransferImport {
         });
     }
     /** $light (list entries) omits per-artifact arrays and only stats files while uploading. */
-    private function summary(array $s,bool $light=false): array {
+    private function summary(array $s,bool $light=false,bool $full=false): array {
+        if($this->compactResponses&&!$full)return $this->compactSummary($s);
         $offsets=[];
         if($light&&!in_array($s['phase'],['uploading','reusing_artifacts','snapshotting','paused'],true))$offsets=array_column($s['artifacts'],'bytes');
         else foreach($s['artifacts'] as $i=>$a){$path=$this->dir($s['id']).'/artifact-'.$i.'/data';clearstatcache(true,$path);$offsets[]=is_file($path)?filesize($path):(($s['cleanedUp']??false)?$a['bytes']:0);}
@@ -213,6 +221,31 @@ final class TransferImport {
             'progress'=>['uploadedBytes'=>array_sum($offsets),'totalBytes'=>array_sum(array_column($s['artifacts'],'bytes')),'tableIndex'=>$tableIndex,'tableCount'=>count($tables),'rowsRead'=>array_sum(array_column($tables,'rows'))],
             'authors'=>$s['authors']??null,'error'=>$s['error']??null,'cleanedUp'=>$s['cleanedUp']??false,'updatedAt'=>$s['updatedAt']??$s['createdAt'],'finishedAt'=>$s['finishedAt']??null];
         if($light){unset($out['artifacts'],$out['offsets'],$out['tableRows']);$out['artifactCount']=count($s['artifacts']);}
+        return $out;
+    }
+    /** Opt-in transport view only: no artifact stats and no change to journals or
+     * recovery transitions. Detailed status remains available for review. */
+    private function compactSummary(array $s): array {
+        $tables=$s['tables'];$phase=$s['phase']==='paused'?($s['resumePhase']??''):$s['phase'];
+        $total=array_sum(array_column($s['artifacts'],'bytes'));$rows=array_sum(array_column($tables,'rows'));
+        $tableIndex=count($tables);
+        if(in_array($phase,['uploading','reusing_artifacts','checking_artifacts','scanning_database','mapping_authors','snapshotting'],true))$tableIndex=0;
+        elseif(in_array($phase,['preparing_tables','verifying_tables','activating_tables','rollback_preflight_tables','rollback_tables'],true)||($phase==='reserving'&&$this->activation($s)))$tableIndex=max(0,min($tableIndex,(int)$s['cursor']));
+        elseif($phase==='reading_database'){$k=array_search($s['reader']['current']??null,array_column($tables,'source'),true);$tableIndex=$k===false?0:$k;}
+        // Upload progress belongs to view=upload, whose indexes account for replay
+        // and torn tails. A cancelled/paused upload must not be claimed complete.
+        $knownUpload=!in_array($phase,['uploading','reusing_artifacts','snapshotting','cancelled'],true);
+        $clip=static fn($v,$limit)=>json_decode(json_encode(substr((string)$v,0,$limit),JSON_INVALID_UTF8_SUBSTITUTE|JSON_THROW_ON_ERROR),true);
+        $samples=[];foreach(array_slice($s['samples']??[],0,3) as $sample){$samples[]=['table'=>$clip($sample['table']??'',64),'column'=>$clip($sample['column']??'',64),'before'=>$clip($sample['before']??'',240),'after'=>$clip($sample['after']??'',240)];}
+        $error=null;if(is_array($s['error']??null))$error=['code'=>$clip($s['error']['code']??'zoer_import_failed',64),'message'=>$clip($s['error']['message']??self::GENERIC,300),'phase'=>isset($s['error']['phase'])?$clip($s['error']['phase'],64):null];
+        $out=['id'=>$s['id'],'responseView'=>'compact','detailsAvailable'=>true,'kind'=>$s['kind']??'transfer','phase'=>$s['phase'],
+            'target'=>$s['target'],'sourceUrl'=>$s['sourceUrl'],'migrationMode'=>$s['migrationMode']??'verified-workers','fence'=>$this->opt($s)['fence'],
+            'cursor'=>$s['cursor'],'artifactCount'=>count($s['artifacts']),'createdAt'=>$s['createdAt'],'updatedAt'=>$s['updatedAt']??$s['createdAt'],'finishedAt'=>$s['finishedAt']??null,
+            'cleanedUp'=>$s['cleanedUp']??false,'rollbackRefused'=>$s['rollbackRefused']??false,'resumePhase'=>$s['phase']==='paused'?($s['resumePhase']??null):null,'error'=>$error,
+            'progress'=>['uploadedBytes'=>$knownUpload?$total:null,'uploadProgressAvailable'=>$knownUpload,'totalBytes'=>$total,'tableIndex'=>$tableIndex,'tableCount'=>count($tables),'rowsRead'=>$rows],
+            'stats'=>['replacements'=>array_sum(array_column($tables,'replacements')),'tableCount'=>count($tables),'rows'=>$rows,'createdTables'=>count(array_filter($tables,static fn($t)=>$t['created']??false)),
+                'schemaReplacedTables'=>count(array_filter($tables,static fn($t)=>$t['schemaReplaced']??false)),'sampleCount'=>count($s['samples']??[]),'samples'=>$samples,'samplesTruncated'=>count($s['samples']??[])>count($samples)],
+            'authors'=>($s['authors']??null)===null?null:['matched'=>(int)($s['authors']['matched']??0),'fallback'=>(int)($s['authors']['fallback']??0)]];
         return $out;
     }
     public function status(string $id): array {return $this->locked(fn()=>$this->summary($this->read($id)));}
@@ -315,7 +348,7 @@ final class TransferImport {
         $phase=$this->head($id);
         $u=$this->uploadIndex($id,false)??$this->locked(fn()=>$this->uploadIndex($id));
         if($u===null){
-            $s=$this->read($id);$p=$this->summary($s);$cursor=['index'=>count($s['artifacts']),'offset'=>0];
+            $s=$this->read($id);$p=$this->summary($s,false,true);$cursor=['index'=>count($s['artifacts']),'offset'=>0];
             if($s['phase']!=='snapshotting')foreach($p['offsets'] as $i=>$o)if($o<$s['artifacts'][$i]['bytes']){$cursor=['index'=>$i,'offset'=>intdiv($o,StageStore::CHUNK)*StageStore::CHUNK];break;}
             return ['cursor'=>$s['phase']==='snapshotting'?['index'=>0,'offset'=>0]:$cursor,'uploadedBytes'=>$p['progress']['uploadedBytes'],'totalBytes'=>$p['progress']['totalBytes'],'phase'=>$s['phase']];
         }

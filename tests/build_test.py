@@ -5,6 +5,11 @@ from zipfile import ZipFile
 root = Path(__file__).resolve().parents[1]
 subprocess.run(['python3', 'scripts/build.py'], cwd=root, check=True, capture_output=True)
 version=re.search(r'Version: ([0-9.]+)',(root/'zoer-connect.php').read_text()).group(1)
+assert re.search(r'^Stable tag: '+re.escape(version)+r'$',(root/'readme.txt').read_text(),re.M), 'Readme version mismatch'
+plugin=(root/'includes/Plugin.php').read_text()
+assert "public const VERSION = '"+version+"';" in plugin, 'Native version constant mismatch'
+assert "'version' => '"+version+"'" in plugin, 'Native API version mismatch'
+assert '<p>Version '+version+' —' in plugin, 'Native admin version mismatch'
 archive = root/'dist'/f'zoer-connect-{version}.zip'
 first = archive.read_bytes()
 subprocess.run(['python3', 'scripts/build.py'], cwd=root, check=True, capture_output=True)
