@@ -24,6 +24,14 @@ final class Plugin {
         }elseif(!self::$applicationPassword || !current_user_can('manage_options'))return new \WP_Error('zoer_unauthorized','A connection key or administrator application password is required.',['status'=>401]);
         return true;
     }
+    /** Export source identity. originalUrls lists the source siteurl when WordPress
+     * runs in a subdirectory of (or apart from) its home, so imports replace URLs under
+     * both; the importer refuses invalid original URLs, so an unusable siteurl is left out. */
+    public static function exportSource(string $home,string $siteurl,string $prefix,string $version,string $abspath): array {
+        $home=rtrim($home,'/\\');$siteurl=rtrim($siteurl,'/\\');
+        $original=$siteurl!==$home&&strlen($siteurl)<2048&&filter_var($siteurl,FILTER_VALIDATE_URL)&&in_array(parse_url($siteurl,PHP_URL_SCHEME),['http','https'],true);
+        return ['url'=>$home,'originalUrls'=>$original?[$siteurl]:[],'prefix'=>$prefix,'wordpressVersion'=>$version,'abspath'=>rtrim($abspath,'/\\')];
+    }
     public static function storageRoot(): string {
         if(defined('ZOER_CONNECT_STORAGE_DIR'))return ZOER_CONNECT_STORAGE_DIR;
         $configured=get_option('zoer_connect_storage_dir','');
@@ -168,7 +176,7 @@ final class Plugin {
             $get=static fn($name)=>(string)$wpdb->get_var($wpdb->prepare("SELECT option_value FROM `{$wpdb->options}` WHERE option_name=%s",$name));
             $plugins=@unserialize($get('active_plugins'),['allowed_classes'=>false]);$plugins=is_array($plugins)?$plugins:[];
             $active=['themes'=>array_values(array_unique(array_filter([$get('template'),$get('stylesheet')]))),'plugins'=>array_values(array_unique(array_map(static fn($p)=>str_contains($p,'/')?strstr($p,'/',true):$p,array_filter($plugins,'is_string'))))];
-            return $store->create($body,['url'=>rtrim($get('home'),'/'),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version,'abspath'=>rtrim(ABSPATH,'/')],$active);
+            return $store->create($body,self::exportSource($get('home'),$get('siteurl'),$wpdb->prefix,(string)$wp_version,ABSPATH),$active);
         }catch(\Throwable $e){http_response_code($e instanceof \InvalidArgumentException?400:409);$error=TransferImport::safeError($e,'exporting');$error['code']='zoer_export_blocked';return $error;}
     }
     /** POST /imports/{id}/batch. Octet-stream and multipart bodies are streamed from
@@ -263,7 +271,7 @@ final class Plugin {
         }
         $register('/status', 'GET', static fn()=>self::statusView(get_option(ConnectionKey::OPTION,null)));
         $register('/diagnostics','GET',static function(){global $wpdb;return Diagnostics::collect($wpdb);});
-        $register('/exports/paged', 'POST', static function($r){global $wpdb,$wp_version;$b=$r->get_json_params();if(!is_array($b))throw new \InvalidArgumentException('JSON selections required.');if(($b['snapshotMode']??null)==='maintenance'&&empty($_SERVER['HTTP_X_ZOER_CONNECTION']))throw new \InvalidArgumentException('Source pause requires a connection key.');return self::exports(true)->create($b,['url'=>untrailingslashit(home_url()),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version,'abspath'=>untrailingslashit(ABSPATH)],self::activeResources());});
+        $register('/exports/paged', 'POST', static function($r){global $wpdb,$wp_version;$b=$r->get_json_params();if(!is_array($b))throw new \InvalidArgumentException('JSON selections required.');if(($b['snapshotMode']??null)==='maintenance'&&empty($_SERVER['HTTP_X_ZOER_CONNECTION']))throw new \InvalidArgumentException('Source pause requires a connection key.');return self::exports(true)->create($b,self::exportSource(home_url(),site_url(),$wpdb->prefix,(string)$wp_version,ABSPATH),self::activeResources());});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})/step','POST',static function($r){global $wpdb;return self::exports(true)->step($r['id'],static fn($p,array $filters=[])=>DatabaseExporter::write($wpdb,$p,null,40,$filters),$wpdb);});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})/manifest','GET',static function($r){$o=$r['offset'];if(!is_string($o)||!preg_match('/^(0|[1-9][0-9]{0,6})$/D',$o))throw new \InvalidArgumentException('Invalid manifest offset.');return self::exports(true)->manifest($r['id'],(int)$o);});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})/batch','GET',static function($r){foreach(['index','offset'] as $k)if(!is_string($r[$k])||!preg_match('/^(0|[1-9][0-9]{0,12})$/D',$r[$k]))throw new \InvalidArgumentException('Invalid export range.');return self::exports(true)->batch($r['id'],(int)$r['index'],(int)$r['offset']);});
@@ -271,7 +279,7 @@ final class Plugin {
         $register('/exports', 'POST', static function($r){
             global $wpdb, $wp_version;
             $body=$r->get_json_params();if(!is_array($body))throw new \InvalidArgumentException('JSON export selections required.');
-            return self::exports()->create($body,['url'=>untrailingslashit(home_url()),'prefix'=>$wpdb->prefix,'wordpressVersion'=>$wp_version,'abspath'=>untrailingslashit(ABSPATH)],static fn($path,array $filters=[])=>DatabaseExporter::write($wpdb,$path,null,40,$filters),self::activeResources());
+            return self::exports()->create($body,self::exportSource(home_url(),site_url(),$wpdb->prefix,(string)$wp_version,ABSPATH),static fn($path,array $filters=[])=>DatabaseExporter::write($wpdb,$path,null,40,$filters),self::activeResources());
         });
         $register('/exports/(?P<id>[a-f0-9]{32})','GET',static fn($r)=>self::exports()->status($r['id']));
         $register('/exports/(?P<id>[a-f0-9]{32})','DELETE',static fn($r)=>self::exports()->cancel($r['id']));

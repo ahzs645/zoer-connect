@@ -26,7 +26,7 @@ Upload and activate the plugin. Open Tools > Zoer Connect to generate connection
 == Changelog ==
 
 = 0.5.3 (development candidate) =
-Optional compact import acknowledgements reduce repeated response bytes while retaining detailed status, exact destination binding, complete private journals, verification and guarded rollback. Clients negotiate compactImportResponses before requesting view=compact. This source candidate is not a published update or a hosting qualification.
+Optional compact import acknowledgements reduce repeated response bytes while retaining detailed status, exact destination binding, complete private journals, verification and guarded rollback. Clients negotiate compactImportResponses before requesting view=compact. Exports report the source siteurl as an original URL when WordPress runs in a subdirectory, and imports from a source with another table prefix no longer leave its roles row as an orphan option. This source candidate is not a published update or a hosting qualification.
 
 = 0.5.2 =
 Discover qualified updates and download checksum-verified ZIPs directly from the public Zoer Connect GitHub Releases. This is the final bridge update offered through the legacy releases feed; existing connector keys, settings and transfer journals are preserved.

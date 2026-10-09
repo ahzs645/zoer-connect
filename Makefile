@@ -53,6 +53,8 @@ test: lint
 	php tests/import-compact.php
 	php tests/replace-kind.php
 	php tests/import-fixes.php
+	php tests/prefix-roles.php
+	php tests/export-source.php
 	php tests/import-admin.php
 	php tests/admin-transfers.php
 	php tests/request-drain.php

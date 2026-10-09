@@ -1,6 +1,6 @@
 <?php
 namespace ZoerConnect;
-foreach(['ImportError','StageStore','FileComparison','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement','RewriteRefresh','CachePurge','DatabaseExporter','BatchUpload'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
+foreach(['ImportError','StageStore','FileComparison','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement','RewriteRefresh','CachePurge','SettingsPreservation','DatabaseExporter','BatchUpload'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
 
 /** Authenticated callers supply the current native credential generation. All
  * mutable job inputs are private and bound to that generation and destination.
@@ -654,6 +654,7 @@ final class TransferImport {
                     }unset($v);
                     if(!$replace&&$posts)$row['post_author']=(string)($map[(string)$row['post_author']]??$s['admin']);
                     if(!$replace&&$t['name']===$this->db->prefix.'comments')$row['user_id']=(string)($map[(string)$row['user_id']]??0);
+                    if($t['name']===$this->db->options&&SettingsPreservation::orphanRoles($s['sourcePrefix'],$this->db->prefix,(string)($row['option_name']??'')))break;
                     if($t['name']===$this->db->options&&((($row['option_name']??'')==='active_plugins'&&$keepPlugins)||(in_array($row['option_name']??'',['template','stylesheet'],true)&&$keepTheme))){
                         $old=$this->db->get_var($this->db->prepare("SELECT option_value FROM `{$this->db->options}` WHERE option_name=%s",$row['option_name']));if($old!==null)$row['option_value']=$old;
                     }

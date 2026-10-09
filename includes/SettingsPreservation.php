@@ -7,6 +7,12 @@ require_once __DIR__.'/CachePurge.php';
 final class SettingsPreservation {
     /** Destination runtime options refreshed again at cutover (see TableStage). */
     public const RUNTIME=['cron',RewriteRefresh::OPTION,CachePurge::OPTION];
+    /** A source with another table prefix stores its roles as `{source}user_roles`.
+     * Users are never imported and the destination keeps its own roles row, so the
+     * source row would only be an orphan option in the destination. */
+    public static function orphanRoles(string $sourcePrefix,string $destinationPrefix,string $option): bool {
+        return $sourcePrefix!==$destinationPrefix&&$option===$sourcePrefix.'user_roles';
+    }
     public static function apply($db, string $stage): void {
         if(!preg_match('/^zoer_s_[a-f0-9]{16}$/D',$stage))throw new \InvalidArgumentException('Invalid staging table.');
         $keys=['cron','home','siteurl','admin_email','new_admin_email','upload_path','upload_url_path','blog_public',$db->prefix.'user_roles','zoer_connect_profiles','zoer_connect_connection','zoer_connect_storage_dir','zoer_connect_transfer_quota_bytes',RewriteRefresh::OPTION,CachePurge::OPTION];

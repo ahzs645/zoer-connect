@@ -61,6 +61,12 @@ A compact response carries `responseView: "compact"`, `detailsAvailable: true`, 
 
 This reduces repeated response bytes and per-artifact filesystem checks. It preserves the existing complete crash-safe journal, including its decoding, hashing and persistence costs. It does not introduce a faster publication scheduler or change verification, backups, fences or rollback. Temporary-file tests cover native capability/query selection, 100,000 artifacts, legacy detail, finish replay and guarded rollback; this addition is not yet a released or hosting-qualified feature.
 
+### Subdirectory sources and table prefixes (0.5.3 candidate)
+
+Export `source` adds `originalUrls`: the source `siteurl` when it differs from `home` (WordPress in a subdirectory or on another address), otherwise `[]`. Clients forward it as the import's `originalUrls`, which imports already accept, so URLs under the siteurl are replaced as well as the home URL. An unusable siteurl (not an http(s) URL, or 2,048 bytes or longer) is left out.
+
+When the source table prefix differs from the destination's, an import no longer stages the source's `{sourcePrefix}user_roles` option. Users are never imported and the destination keeps its own `{prefix}user_roles`, so the source row was only an orphan option.
+
 ## API version 2 (0.4.0)
 
 All additions are optional. A client that sends none of them gets 0.3.14 behaviour, including identical idempotent export bindings, the 0.3.14 replacement rules and the early fence. Clients must check `capabilities` before sending an option. Everything below is exercised by the unit suites and `tests/e2e-docker/`; none of it is qualified on real hosting yet.
