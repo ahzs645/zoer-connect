@@ -6,7 +6,7 @@ namespace ZoerConnect;
  * deployment policy; an HTTP maintenance flag cannot fence direct SQL clients.
  */
 final class WriteFence {
-    private const SOURCE_HASH='c769b28d90ce4fc05f43433003300186b00abe3e3f647c087bd6b3ad59f3ab9a';
+    private const SOURCE_HASH='13cdfffba531f4c8ddfa8a058e46180634f2d0ae7f69dd9daae7b8ee32d7e8fa';
     public static function runtimeVerified(): bool {
         $source=@file_get_contents(__FILE__);
         if($source===false)return false;
@@ -23,9 +23,23 @@ final class WriteFence {
         if (!$private||!$root||is_link($privateRoot)||$private===$root||str_starts_with($private,$root.'/')) throw new \RuntimeException('Private write fence storage is required.');
         $this->private=$private; $this->root=$root;
     }
+    /**
+     * The MU bootstrap. It is inert in a copy of the site at another path (its absolute paths belong
+     * to this installation) and once Zoer Connect's files are removed while no transfer is paused;
+     * a paused transfer without the plugin answers 503 instead of a fatal error.
+     */
     private function bootstrap(bool $sharedCaches=false): string {
         $plugin=$this->root.'/wp-content/plugins/zoer-connect/includes/';
+        return "<?php\n".($sharedCaches?"// Shared-hosting cache coexistence; early cache responses are outside this fence.\n":"")."// Zoer Connect request fence: keep before ordinary plugins and MU plugins.\n// Inert in a copy of this site at another path, and after Zoer Connect is removed while no transfer is paused.\ndefined('ABSPATH') || exit;\nif (realpath(ABSPATH) !== ".var_export($this->root,true).") return;\nif (!is_file(".var_export($plugin.'WriteFence.php',true).")) {\n if (!file_exists(".var_export($this->private.'/write-fence.json',true).")) return;\n http_response_code(503); header('Content-Type: application/json'); header('Cache-Control: no-store'); header('Retry-After: 300');\n echo '{\"code\":\"zoer_transfer_paused\",\"message\":\"A Zoer Connect transfer is paused but the plugin files are missing. Reinstall Zoer Connect to finish or roll back the transfer.\"}'; exit;\n}\nrequire_once ".var_export($plugin.'WriteFence.php',true).";\n\\ZoerConnect\\WriteFence::boot(".var_export($this->private,true).", ".var_export($this->root,true).", static function (string \$route) {\n require_once ".var_export($plugin.'Plugin.php',true).";\n return \\ZoerConnect\\Plugin::earlyImportRecovery(\$route);\n});\n";
+    }
+    /** The 0.5.x bootstrap: still a valid fence on its own site (so upgraded sites keep working), replaced by upgradeLegacy(). */
+    private function legacyBootstrap(bool $sharedCaches=false): string {
+        $plugin=$this->root.'/wp-content/plugins/zoer-connect/includes/';
         return "<?php\n".($sharedCaches?"// Shared-hosting cache coexistence; early cache responses are outside this fence.\n":"")."// Zoer Connect request fence: keep before ordinary plugins and MU plugins.\ndefined('ABSPATH') || exit;\nrequire_once ".var_export($plugin.'WriteFence.php',true).";\n\\ZoerConnect\\WriteFence::boot(".var_export($this->private,true).", ".var_export($this->root,true).", static function (string \$route) {\n require_once ".var_export($plugin.'Plugin.php',true).";\n return \\ZoerConnect\\Plugin::earlyImportRecovery(\$route);\n});\n";
+    }
+    /** Whether $body is this site's fence in the current or the 0.5.x form. */
+    private function fenceBody(string $body,bool $sharedCaches): bool {
+        return $body===$this->bootstrap($sharedCaches)||$body===$this->legacyBootstrap($sharedCaches);
     }
     private function compatible(bool $sharedCaches=false): bool {
         if (defined('WP_CONTENT_DIR') && realpath(WP_CONTENT_DIR)!==realpath($this->root.'/wp-content')) return false;
@@ -39,14 +53,14 @@ final class WriteFence {
     public function installed(): bool {
         if (!$this->compatible($this->sharedCaches())) return false;
         $dir=$this->root.'/wp-content/mu-plugins'; $path=$dir.'/'.self::MU;
-        if (is_link($dir)||is_link($path)||!is_file($path)||file_get_contents($path)!==$this->bootstrap($this->sharedCaches())) return false;
+        if (is_link($dir)||is_link($path)||!is_file($path)||!$this->fenceBody((string)file_get_contents($path),$this->sharedCaches())) return false;
         foreach (glob($dir.'/*.php')?:[] as $file) if (strcmp(basename($file),self::MU)<0) return false;
         return true;
     }
     /** Explicit setup step, never invoked as a side effect of normal requests. */
     public function sharedCaches(): bool {
         $path=$this->root.'/wp-content/mu-plugins/'.self::MU;
-        return !is_link($path)&&is_file($path)&&file_get_contents($path)===$this->bootstrap(true);
+        return !is_link($path)&&is_file($path)&&$this->fenceBody((string)file_get_contents($path),true);
     }
     public function install(bool $sharedCaches=false): void {
         $this->control(fn()=>$this->installLocked($sharedCaches));
@@ -62,7 +76,8 @@ final class WriteFence {
         $previous=null;
         if (file_exists($path)) {
             if (file_get_contents($path)===$body) return;
-            if (file_get_contents($path)!==$this->bootstrap(!$sharedCaches)) throw new \RuntimeException('Existing MU fence differs; inspect it before replacement.');
+            // Our own fence in the other cache mode or the 0.5.x form is replaced; anything else is not ours.
+            if (!$this->fenceBody((string)file_get_contents($path),!$sharedCaches)&&file_get_contents($path)!==$this->legacyBootstrap($sharedCaches)) throw new \RuntimeException('Existing MU fence differs; inspect it before replacement.');
             $previous=file_get_contents($path);
         }
         // Never expose a partial *.php file to another WordPress request.
@@ -84,6 +99,20 @@ final class WriteFence {
                 if(file_exists($path)||is_link($path)||!rename($tmp,$path))throw new \RuntimeException('Cannot atomically install MU bootstrap.');
             }
         } finally {if(is_resource($h))fclose($h);if(is_file($tmp))unlink($tmp);}
+    }
+    /**
+     * Replaces a 0.5.x bootstrap (which fatals when its absolute paths are missing) with the current
+     * form in the same cache mode. Runs for administrators in wp-admin; never while a transfer holds
+     * the fence. Returns whether the file was replaced.
+     */
+    public function upgradeLegacy(): bool {
+        return $this->control(function(): bool {
+            $path=$this->root.'/wp-content/mu-plugins/'.self::MU;
+            if (is_link($path)||!is_file($path)||$this->marker()!==null) return false;
+            $body=(string)file_get_contents($path);
+            foreach ([true,false] as $sharedCaches) if ($body===$this->legacyBootstrap($sharedCaches)) {$this->installLocked($sharedCaches);return true;}
+            return false;
+        });
     }
     private function identity(string $id,string $binding): void {
         if (!preg_match('/^[a-f0-9]{32}$/D',$id)||!preg_match('/^[a-f0-9]{64}$/D',$binding)) throw new \InvalidArgumentException('Invalid fence identity.');

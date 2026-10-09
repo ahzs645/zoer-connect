@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.5.3
+Stable tag: 0.5.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -25,8 +25,11 @@ Upload and activate the plugin. Open Tools > Zoer Connect to generate connection
 
 == Changelog ==
 
-= 0.5.3 (development candidate) =
-Optional compact import acknowledgements reduce repeated response bytes while retaining detailed status, exact destination binding, complete private journals, verification and guarded rollback. Clients negotiate compactImportResponses before requesting view=compact. Exports report the source siteurl as an original URL when WordPress runs in a subdirectory, and imports from a source with another table prefix no longer leave its roles row as an orphan option. This source candidate is not a published update or a hosting qualification.
+= 0.5.4 =
+The request-protection MU file no longer breaks copies of a site: at another path it does nothing, and after Zoer Connect's files are removed it does nothing unless a transfer is paused, which then answers 503 with reinstall guidance instead of a fatal error. Existing 0.5.x MU files keep working and are replaced when an administrator next opens wp-admin, never during a transfer. Destination setup must be confirmed again in Tools > Zoer Connect before the next import, because the request-fence code changed.
+
+= 0.5.3 =
+Optional compact import acknowledgements reduce repeated response bytes while retaining detailed status, exact destination binding, complete private journals, verification and guarded rollback. Clients negotiate compactImportResponses before requesting view=compact. Exports report the source siteurl as an original URL when WordPress runs in a subdirectory, and imports from a source with another table prefix no longer leave its roles row as an orphan option. Released without live hosting qualification.
 
 = 0.5.2 =
 Discover qualified updates and download checksum-verified ZIPs directly from the public Zoer Connect GitHub Releases. This is the final bridge update offered through the legacy releases feed; existing connector keys, settings and transfer journals are preserved.

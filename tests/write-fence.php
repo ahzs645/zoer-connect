@@ -44,6 +44,32 @@ try{
  check(WriteFence::importRoute(['REQUEST_URI'=>'/wp-json/zoer-connect/v1/imports/'.$id.'/rollback'],[])==='/zoer-connect/v1/imports/'.$id.'/rollback','Pretty recovery route missing.');
  check(WriteFence::importRoute([],['rest_route'=>'/zoer-connect/v1/imports'])==='/zoer-connect/v1/imports','Query recovery route missing.');
  foreach(['/wp-json/zoer-connect/v1/imports/../../users','/wp-json/zoer-connect/v1/imports/bad','/wp-json/zoer-connect/v1/export'] as $route)check(WriteFence::importRoute(['REQUEST_URI'=>$route],[])===null,'Broad route bypass.');
+ // The generated MU file in a copy of the site at another path, and after the plugin files are removed.
+ $mu=$base.'/public/wp-content/mu-plugins/000-zoer-connect-fence.php';
+ $copy=$base.'/copy';mkdir($copy,0755);
+ $runAt=function($abspath,$route='/')use($base,$mu){$boot=$base.'/bootstrap-at.php';file_put_contents($boot,'<?php define("ABSPATH",$argv[1]); $_SERVER["REQUEST_URI"]=$argv[2]; require '.var_export($mu,true).'; echo "ORDINARY_PLUGIN_EXECUTED";');$p=[];$h=proc_open([PHP_BINARY,$boot,$abspath,$route],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$p);fclose($p[0]);$out=stream_get_contents($p[1]);$err=stream_get_contents($p[2]);fclose($p[1]);fclose($p[2]);check(proc_close($h)===0&&$err==='','Bootstrap failed: '.$err);return $out;};
+ check($runAt($copy.'/')==='ORDINARY_PLUGIN_EXECUTED','A copy at another path must not load this site\'s fence.');
+ check($runAt($base.'/public/')==='ORDINARY_PLUGIN_EXECUTED','Installed fence must admit ordinary requests while no transfer is paused.');
+ $includes=$base.'/public/wp-content/plugins/zoer-connect/includes';rename($includes,$includes.'.removed');
+ check($runAt($base.'/public/')==='ORDINARY_PLUGIN_EXECUTED','Removed plugin without a paused transfer must not break the site.');
+ file_put_contents($base.'/private/write-fence.json',json_encode(['id'=>$id,'binding'=>$owner,'createdAt'=>time()]));
+ $paused=json_decode($runAt($base.'/public/'),true);check(($paused['code']??'')==='zoer_transfer_paused'&&str_contains($paused['message']??'','plugin files are missing'),'Removed plugin during a paused transfer must answer 503, not run ordinary code.');
+ check($runAt($copy.'/')==='ORDINARY_PLUGIN_EXECUTED','A copy at another path stays inert even when the original paths are gone and the original is paused.');
+ unlink($base.'/private/write-fence.json');rename($includes.'.removed',$includes);
+ // A 0.5.x bootstrap keeps working after the upgrade, is replaced by upgradeLegacy() and never during a transfer.
+ $plugin=$base.'/public/wp-content/plugins/zoer-connect/includes/';$private=realpath($base.'/private');$root=realpath($base.'/public');
+ $legacy=fn(bool $shared)=>"<?php\n".($shared?"// Shared-hosting cache coexistence; early cache responses are outside this fence.\n":"")."// Zoer Connect request fence: keep before ordinary plugins and MU plugins.\ndefined('ABSPATH') || exit;\nrequire_once ".var_export($realPlugin=realpath($plugin).'/WriteFence.php',true).";\n\\ZoerConnect\\WriteFence::boot(".var_export($private,true).", ".var_export($root,true).", static function (string \$route) {\n require_once ".var_export(realpath($plugin).'/Plugin.php',true).";\n return \\ZoerConnect\\Plugin::earlyImportRecovery(\$route);\n});\n";
+ $current=file_get_contents($mu);
+ file_put_contents($mu,$legacy(false));check($f->installed(),'A 0.5.x fence must still verify after the upgrade.');
+ check($runAt($base.'/public/')==='ORDINARY_PLUGIN_EXECUTED','A 0.5.x fence must keep serving ordinary requests after the upgrade.');
+ file_put_contents($base.'/private/write-fence.json',json_encode(['id'=>$id,'binding'=>$owner,'createdAt'=>time()]));
+ check(!$f->upgradeLegacy()&&file_get_contents($mu)===$legacy(false),'The fence must not be replaced while a transfer holds it.');unlink($base.'/private/write-fence.json');
+ check($f->upgradeLegacy()&&file_get_contents($mu)===$current&&$f->installed(),'upgradeLegacy must install the current bootstrap.');
+ check(!$f->upgradeLegacy(),'The current bootstrap is not upgraded again.');
+ file_put_contents($mu,$legacy(true));check($f->sharedCaches()&&$f->upgradeLegacy()&&$f->sharedCaches()&&str_contains(file_get_contents($mu),'realpath(ABSPATH)'),'The shared-cache 0.5.x fence keeps its mode when upgraded.');
+ $f->install(false);check($f->installed()&&!$f->sharedCaches(),'Setup switches modes from an upgraded fence.');
+ file_put_contents($mu,"<?php // someone else's file\n");rejects(fn()=>$f->install());
+ echo "PASS copied sites and removed plugins leave the fence inert, a paused transfer answers 503, 0.5.x fences keep working and upgrade outside transfers\n";
  echo "PASS earliest MU installation, drop-in rejection, in-flight drain, durable fence, owner binding, recovery paths and release\n";
 }finally{
  $walk=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST);

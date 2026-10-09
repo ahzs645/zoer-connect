@@ -2,7 +2,7 @@
 namespace ZoerConnect;
 
 final class Plugin {
-    public const VERSION = '0.5.3';
+    public const VERSION = '0.5.4';
     private static bool $applicationPassword = false;
     public static function boot(): void {
         add_action('application_password_did_authenticate', static function () { self::$applicationPassword = true; });
@@ -13,6 +13,12 @@ final class Plugin {
         add_action('admin_menu', static function () {
             add_management_page('Zoer Connect', 'Zoer Connect', 'manage_options', 'zoer-connect', [self::class, 'admin']);
         });
+        add_action('admin_init', [self::class, 'upgradeFence']);
+    }
+    /** Replaces a 0.5.x request-fence bootstrap, which breaks copies of the site and plugin removal (see WriteFence::upgradeLegacy). */
+    public static function upgradeFence(): void {
+        if (!current_user_can('manage_options') || !is_file(ABSPATH.'wp-content/mu-plugins/000-zoer-connect-fence.php')) return;
+        try { (new WriteFence(self::storageRoot(), rtrim(ABSPATH, '/')))->upgradeLegacy(); } catch (\Throwable $e) { /* setup shows fence problems */ }
     }
     public static function authorize($request = null) {
         if (!is_ssl()) return new \WP_Error('zoer_unauthorized', 'HTTPS is required.', ['status' => 401]);
@@ -231,7 +237,7 @@ final class Plugin {
             $capabilities['batchUpload']=true;$capabilities['batchDeflate']=function_exists('inflate_init')&&function_exists('inflate_add');
             $capabilities['compactImportResponses']=true;
             foreach(['replacementRules','replacementVariants','reviewPause','createTables','authorMapping','keepActivePlugins','lateFence','importPauseResume','importCleanup','importList','siteReplace','cachePurge','databaseFilters','resourceModes','mediaSince','diagnostics','safeErrors'] as $capability)$capabilities[$capability]=true;
-            return ['version' => '0.5.3', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'transferLimits'=>['manifestMaxBytes'=>8388608,'maxFileBytes'=>TransferStorage::FILE_BYTES,'quotaBytes'=>TransferStorage::quota(),'reserveBytes'=>TransferStorage::RESERVE_BYTES],'batchLimits'=>BatchUpload::limits()];
+            return ['version' => '0.5.4', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'transferLimits'=>['manifestMaxBytes'=>8388608,'maxFileBytes'=>TransferStorage::FILE_BYTES,'quotaBytes'=>TransferStorage::quota(),'reserveBytes'=>TransferStorage::RESERVE_BYTES],'batchLimits'=>BatchUpload::limits()];
     }
     public static function routes(): void {
         $register = static function ($path, $method, $handler) {
@@ -317,7 +323,7 @@ final class Plugin {
     }
     public static function admin(): void {
         if (!current_user_can('manage_options')) return;
-        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.5.3 — WordPress transfers and recovery.</p>';
+        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.5.4 — WordPress transfers and recovery.</p>';
         echo '<p>Imports require explicit destination setup and Push permission. Review the destination and selected resources in Zoer before importing.</p>';
         ConnectionAdmin::render();
         ExportAdmin::render();
