@@ -1,6 +1,6 @@
 <?php
 namespace ZoerConnect;
-foreach(['ImportError','StageStore','FileComparison','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement','RewriteRefresh','CachePurge','SettingsPreservation','DatabaseExporter','BatchUpload'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
+foreach(['ImportError','StageStore','FileComparison','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement','RewriteRefresh','CachePurge','Publication','SettingsPreservation','DatabaseExporter','BatchUpload'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
 
 /** Authenticated callers supply the current native credential generation. All
  * mutable job inputs are private and bound to that generation and destination.
@@ -404,7 +404,8 @@ final class TransferImport {
                 throw new \RuntimeException('Object cache flush failed; retry finish or recovery.');
         });
     }
-    private function queueMaintenance(array $s): void {RewriteRefresh::queue($this->db,$s);CachePurge::queue($this->db,$s);}
+    /** Before the fence opens: rewrite/cache maintenance and the new public publication identity. */
+    private function queueMaintenance(array $s,string $kind='import'): void {RewriteRefresh::queue($this->db,$s);CachePurge::queue($this->db,$s);Publication::commit($this->db,$s,$kind==='rollback'?'rollback':(($s['kind']??null)==='replace'?'replace':'import'));}
     private function afterScan(array $s): string {return $this->activation($s)?'preparing_tables':'reserving';}
     private function writeJson(string $path,array $data): void {$j=json_encode($data,JSON_THROW_ON_ERROR);if(file_put_contents($path.'.tmp',$j)!==strlen($j)||!rename($path.'.tmp',$path))throw new \RuntimeException('Cannot persist import state.');}
     /** Source user ID => destination user ID, with its own durable snapshot cursor. */
@@ -734,7 +735,7 @@ final class TransferImport {
                 }
                 throw $e;
             }
-            if($s['phase']==='rollback_ready'){$this->queueMaintenance($s);$this->reopen($s);$s['phase']='rolled_back';$this->save($s);}
+            if($s['phase']==='rollback_ready'){$this->queueMaintenance($s,'rollback');$this->reopen($s);$s['phase']='rolled_back';$this->save($s);}
             return $this->summary($s);
         },$id);
     }

@@ -37,6 +37,7 @@ test: lint
 	php tests/github-updater.php
 	php tests/rewrite-refresh.php
 	php tests/cache-purge.php
+	php tests/publication-identity.php
 	php tests/write-fence.php
 	php tests/cache-compatibility.php
 	php -d disable_functions=link tests/cache-compatibility.php

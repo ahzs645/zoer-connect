@@ -2,6 +2,7 @@
 namespace ZoerConnect;
 require_once __DIR__.'/RewriteRefresh.php';
 require_once __DIR__.'/CachePurge.php';
+require_once __DIR__.'/Publication.php';
 require_once __DIR__.'/SettingsPreservation.php';
 require_once __DIR__.'/ImportError.php';
 
@@ -73,7 +74,7 @@ final class TableStage {
      * guarded. Post metadata is independently verified by the global preflight.
      */
     private function ephemeral(array $row): bool {
-        if($this->live===$this->db->options)return in_array($row['option_name']??null,['cron','rewrite_rules',RewriteRefresh::OPTION,CachePurge::OPTION],true) || str_starts_with((string)($row['option_name']??''),'_transient_') || str_starts_with((string)($row['option_name']??''),'_site_transient_');
+        if($this->live===$this->db->options)return in_array($row['option_name']??null,['cron','rewrite_rules',RewriteRefresh::OPTION,CachePurge::OPTION,CachePurge::RECEIPT,Publication::OPTION],true) || str_starts_with((string)($row['option_name']??''),'_transient_') || str_starts_with((string)($row['option_name']??''),'_site_transient_');
         if($this->live!==$this->db->prefix.'posts' || ($row['post_type']??null)!=='post' || ($row['post_status']??null)!=='auto-draft' || !in_array($row['post_title']??null,['','Auto Draft'],true))return false;
         foreach(['post_content','post_excerpt','post_content_filtered','post_name','post_password','post_mime_type','to_ping','pinged'] as $field)if(($row[$field]??null)!=='')return false;
         foreach(['post_parent','menu_order','comment_count'] as $field)if(!in_array($row[$field]??null,[0,'0'],true))return false;

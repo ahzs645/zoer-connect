@@ -29,7 +29,7 @@ try{
   expect(!in_array('src_user_roles',$names(),true)&&option($db,'wp_user_roles')===$destinationRoles,"$label: source-prefixed roles dropped, destination roles preserved");
   expect(option($db,'blogname')==='Acme Blog'&&$s['tableRows'][array_search('wp_options',array_column($s['stats']['tables'],'name'),true)]===count($src->dump('src_options'))-1,"$label: other source options imported and the dropped row is not counted");
   $s=$new()->finish($s['id']);expect($s['phase']==='complete',"$label: import finishes");
-  $s=rollbackAll($new,$s['id']);$db->delete('wp_options',['option_name'=>RewriteRefresh::OPTION]);
+  $s=rollbackAll($new,$s['id']);$db->delete('wp_options',['option_name'=>RewriteRefresh::OPTION]);$db->delete('wp_options',['option_name'=>\ZoerConnect\Publication::OPTION]);
   expect($s['phase']==='rolled_back'&&array_column($db->dump('wp_options'),'option_value','option_name')===array_column($before,'option_value','option_name'),"$label: rollback restores the destination options");
  }
  // Same prefix: the source roles row has the destination's name and is replaced by the destination's.

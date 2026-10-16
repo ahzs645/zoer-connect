@@ -2,11 +2,12 @@
 namespace ZoerConnect;
 require_once __DIR__.'/RewriteRefresh.php';
 require_once __DIR__.'/CachePurge.php';
+require_once __DIR__.'/Publication.php';
 
 /** Preserve destination identity while replacing ordinary site options. */
 final class SettingsPreservation {
     /** Destination runtime options refreshed again at cutover (see TableStage). */
-    public const RUNTIME=['cron',RewriteRefresh::OPTION,CachePurge::OPTION];
+    public const RUNTIME=['cron',RewriteRefresh::OPTION,CachePurge::OPTION,CachePurge::RECEIPT,Publication::OPTION];
     /** A source with another table prefix stores its roles as `{source}user_roles`.
      * Users are never imported and the destination keeps its own roles row, so the
      * source row would only be an orphan option in the destination. */
@@ -15,7 +16,7 @@ final class SettingsPreservation {
     }
     public static function apply($db, string $stage): void {
         if(!preg_match('/^zoer_s_[a-f0-9]{16}$/D',$stage))throw new \InvalidArgumentException('Invalid staging table.');
-        $keys=['cron','home','siteurl','admin_email','new_admin_email','upload_path','upload_url_path','blog_public',$db->prefix.'user_roles','zoer_connect_profiles','zoer_connect_connection','zoer_connect_storage_dir','zoer_connect_transfer_quota_bytes',RewriteRefresh::OPTION,CachePurge::OPTION];
+        $keys=['cron','home','siteurl','admin_email','new_admin_email','upload_path','upload_url_path','blog_public',$db->prefix.'user_roles','zoer_connect_profiles','zoer_connect_connection','zoer_connect_storage_dir','zoer_connect_transfer_quota_bytes',RewriteRefresh::OPTION,CachePurge::OPTION,CachePurge::RECEIPT,Publication::OPTION];
         foreach($keys as $key){
             $row=$db->get_row($db->prepare("SELECT option_name,option_value,autoload FROM `{$db->options}` WHERE option_name=%s",$key),ARRAY_A);
             if($db->delete($stage,['option_name'=>$key])===false)throw new \RuntimeException('Option preservation failed.');

@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.5.4
+Stable tag: 0.6.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,9 @@ Large local exports run in a DDEV CLI worker independently of HTTP time limits. 
 Upload and activate the plugin. Open Tools > Zoer Connect to generate connection info and configure direction permissions. New connection keys prepare shared-hosting migration automatically. If storage or hosting compatibility blocks preparation, resolve the administrator diagnostics and save Push permissions to retry; existing incomplete setups retain manual recovery controls. Private storage must be outside the public document root. Deactivation/uninstall preserve private journals; do not remove the connector or MU bootstrap during an active transfer.
 
 == Changelog ==
+
+= 0.6.0 =
+Includes the unreleased 0.5.4 changes. Each completed import or rollback commits a new opaque publication identifier. Public HTML carries it in a zoer-publication meta tag and an X-Zoer-Publication header, and singular pages carry a revision of their post, so Zoer can check what anonymous visitors actually receive after a transfer. The authenticated GET /publication lists the expected identifier, home page and recently changed pages; POST /cache/purge runs the known WordPress cache purges now. Cache purges leave a per-layer receipt: cache plugins report "requested" (their hooks give no confirmation), the object cache "flushed" or "failed"; hosting and CDN caches are outside WordPress and need the provider's purge.
 
 = 0.5.4 =
 The request-protection MU file no longer breaks copies of a site: at another path it does nothing, and after Zoer Connect's files are removed it does nothing unless a transfer is paused, which then answers 503 with reinstall guidance instead of a fatal error. Existing 0.5.x MU files keep working and are replaced when an administrator next opens wp-admin, never during a transfer. Destination setup must be confirmed again in Tools > Zoer Connect before the next import, because the request-fence code changed.
