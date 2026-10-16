@@ -46,34 +46,6 @@ final class Plugin {
         $configured=get_option('zoer_connect_storage_dir','');
         return is_string($configured)&&$configured!=='' ? $configured : dirname(rtrim(ABSPATH,'/')).'/.zoer-connect';
     }
-    private static function storageSettings(): void {
-        $error='';$notice='';
-        if(isset($_POST['zoer_storage_save'])){
-            check_admin_referer('zoer_connect_storage');
-            try {
-                if(defined('ZOER_CONNECT_STORAGE_DIR')||get_option('zoer_connect_storage_dir','')!==''||file_exists(ABSPATH.'wp-content/mu-plugins/000-zoer-connect-fence.php'))throw new \RuntimeException('Storage is already configured or import protection is installed. Keep the existing location for recovery; administrator configuration changes are required.');
-                $old=self::storageRoot();
-                if(is_dir($old)){ $entries=@scandir($old); if($entries===false||array_diff($entries,['.','..','lock']))throw new \RuntimeException('The current storage contains transfer data. Keep its location until transfers and recovery are complete.'); }
-                $path=trim((string)wp_unslash($_POST['zoer_storage_path']??''));
-                if(!str_starts_with($path,'/')||strlen($path)>1000||preg_match('/[\x00-\x1f]/',$path))throw new \RuntimeException('Enter an absolute private filesystem path.');
-                new StageStore($path,[ABSPATH,$_SERVER['DOCUMENT_ROOT']??'']);
-                update_option('zoer_connect_storage_dir',$path,false);$notice='Private storage configured. Test the connection in Zoer and resume the Pull.';
-            }catch(\Throwable $e){$error=$e instanceof StorageUnavailable ? $e->reason : $e->getMessage();}
-        }
-        if(isset($_POST['zoer_quota_save'])){check_admin_referer('zoer_connect_quota');try{$value=trim((string)wp_unslash($_POST['zoer_quota_bytes']??''));if(!ctype_digit($value)||(int)$value<1048576||(int)$value>68719476736)throw new \RuntimeException('Enter a quota from 1048576 to 68719476736 bytes.');if(defined('ZOER_CONNECT_TRANSFER_QUOTA_BYTES'))throw new \RuntimeException('The server configuration controls this quota.');update_option('zoer_connect_transfer_quota_bytes',$value,false);$notice='Transfer quota saved. Existing recovery data is preserved.';}catch(\Throwable $e){$error=$e->getMessage();}}
-        $status=self::storageStatus();
-        echo '<h2>Storage diagnostics</h2><p><strong>'.esc_html($status['code']).'</strong>: '.esc_html($status['message']).'</p>';
-        echo '<p>Current path: <code>'.esc_html(self::storageRoot()).'</code></p><p>PHP filesystem restriction: <code>'.esc_html(ini_get('open_basedir')?:'not configured').'</code></p>';
-        if($notice)echo '<div class="notice notice-success"><p>'.esc_html($notice).'</p></div>';
-        if($error)echo '<div class="notice notice-error"><p>'.esc_html($error).'</p></div>';
-        echo '<h3>Transfer storage quota</h3><p>Per transfer, in bytes. Free space and recovery storage are checked separately. Individual artifacts are limited to 4 GiB.</p><form method="post">';wp_nonce_field('zoer_connect_quota');
-        echo '<label>Quota bytes <input type="number" name="zoer_quota_bytes" min="1048576" max="68719476736" value="'.esc_attr((string)TransferStorage::quota()).'"'.(defined('ZOER_CONNECT_TRANSFER_QUOTA_BYTES')?' disabled':'').'></label> <button class="button" name="zoer_quota_save" value="1"'.(defined('ZOER_CONNECT_TRANSFER_QUOTA_BYTES')?' disabled':'').'>Save quota</button></form>';
-        if(!defined('ZOER_CONNECT_STORAGE_DIR')&&get_option('zoer_connect_storage_dir','')===''){
-            echo '<form method="post"><p>For first-time setup, choose a writable folder outside every public document root. Zoer will not move existing transfers. If PHP cannot access any private folder, ask the server administrator to provide one.</p>';
-            wp_nonce_field('zoer_connect_storage');
-            echo '<label>Private storage path <input class="regular-text" name="zoer_storage_path" required autocomplete="off"></label> <button class="button" name="zoer_storage_save" value="1">Validate and configure storage</button></form>';
-        }
-    }
     private static function store(): StageStore {
         $public = [ABSPATH];
         if (empty($_SERVER['DOCUMENT_ROOT'])) throw new StorageUnavailable('public_root_unavailable');
@@ -331,16 +303,8 @@ final class Plugin {
     public static function admin(): void {
         if (!current_user_can('manage_options')) return;
         echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.5.4 — WordPress transfers and recovery.</p>';
-        echo '<p>Imports require explicit destination setup and Push permission. Review the destination and selected resources in Zoer before importing.</p>';
-        ConnectionAdmin::render();
-        ExportAdmin::render();
-        ImportAdmin::render();
-        TransferAdmin::render();
-        echo '<details><summary>Advanced: application passwords</summary><p>API clients can also use WordPress application passwords. The Push permission above applies to these clients too once connection settings have been configured.</p>';
-        echo '<p><a class="button" href="' . esc_url(admin_url('profile.php#application-passwords-section')) . '">Manage application passwords</a></p>';
-        echo '<p>Revoke the application password from your profile to disconnect. WordPress application passwords inherit the account’s capabilities; they are not restricted to this plugin.</p></details>';
-        self::storageSettings();
-        echo '<h2>Storage</h2><p>Staged files must be outside the public document root. A private sibling folder is used where permitted. Your administrator can configure ZOER_CONNECT_STORAGE_DIR in wp-config.php when necessary.</p>';
-        echo '<p>Only one staging job is reserved at a time. Cancel it through the API to remove its files before starting another. Deactivation and uninstall preserve staged data.</p></div>';
+        require_once __DIR__.'/AdminPage.php';
+        AdminPage::render();
+        echo '</div>';
     }
 }

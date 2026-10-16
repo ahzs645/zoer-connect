@@ -45,19 +45,20 @@ final class TransferAdmin {
     public static function render(): void {
         if(!current_user_can('manage_options'))return;
         try{$imports=self::imports(Plugin::storageRoot());}catch(\Throwable $e){$imports=[];}
-        echo '<section><h2>Transfers</h2><p>Recent imports recorded in private storage. Finished imports keep original tables and file backups for rollback until you clean them up. Cleanup is permanent: rollback is no longer possible afterwards.</p>';
+        echo '<section class="zc-card" id="zoer-transfers"><h2>Transfers</h2><p class="zc-lead">Recent imports into this site. Finished imports keep backups for rollback until you clean them up.</p>';
         if(isset($_GET['zoer_cleanup']))echo '<div class="notice notice-success inline"><p>Import backups cleaned up.</p></div>';
-        if(!$imports){echo '<p>No imports recorded.</p></section>';return;}
+        if(!$imports){echo '<p class="zc-empty">No imports recorded.</p></section>';return;}
         $supported=self::supported();
-        echo '<table class="widefat striped"><thead><tr><th>Import</th><th>Kind</th><th>Phase</th><th>Created</th><th>Destination</th><th>Backups</th></tr></thead><tbody>';
+        echo '<div class="zc-table-wrap"><table class="widefat striped"><caption class="screen-reader-text">Recent imports</caption><thead><tr><th scope="col">Import</th><th scope="col">Kind</th><th scope="col">Phase</th><th scope="col">Created</th><th scope="col">Destination</th><th scope="col">Backups</th></tr></thead><tbody>';
         foreach($imports as $i){
-            echo '<tr><td><code>'.esc_html(substr($i['id'],0,12)).'</code></td><td>'.esc_html($i['kind']).'</td><td>'.esc_html($i['phase']).'</td><td>'.esc_html($i['createdAt']).'</td><td>'.esc_html($i['target']).'</td><td>';
+            $tone=in_array($i['phase'],['complete'],true)?'is-ok':(in_array($i['phase'],self::TERMINAL,true)?'is-off':'is-warn');
+            echo '<tr><td><code>'.esc_html(substr($i['id'],0,12)).'</code></td><td>'.esc_html($i['kind']).'</td><td><span class="zc-badge '.$tone.'">'.esc_html(str_replace('_',' ',$i['phase'])).'</span></td><td class="zc-nowrap">'.esc_html($i['createdAt']).'</td><td>'.esc_html($i['target']).'</td><td>';
             if($i['cleanedUp'])echo 'Cleaned up';
             elseif(!in_array($i['phase'],self::TERMINAL,true))echo 'Retained (import active)';
             elseif(!$supported)echo 'Retained';
             else{echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'" onsubmit="return confirm(\'Delete this import\\u2019s backups? Rollback will no longer be possible.\')">';wp_nonce_field('zoer_import_cleanup');echo '<input type="hidden" name="action" value="zoer_import_cleanup"><input type="hidden" name="import_id" value="'.esc_attr($i['id']).'"><button class="button">Clean up backups</button></form>';}
             echo '</td></tr>';
         }
-        echo '</tbody></table></section>';
+        echo '</tbody></table></div><details class="zc-more"><summary>Learn more</summary><p>Cleanup permanently deletes an import’s original tables and file backups, so it can no longer be rolled back. Only completed, rolled back or cancelled imports can be cleaned up.</p></details></section>';
     }
 }
