@@ -8,7 +8,7 @@ $base=sys_get_temp_dir().'/zoer-connection-admin-'.bin2hex(random_bytes(6));mkdi
 $private=$base.'/.zoer-connect';$post=['zoer_connection_action'=>'rotate','_wpnonce'=>'fixture:zoer_connection_settings'];
 try{
  $html=render();check(!get_option(ConnectionKey::OPTION)&&!file_exists($private),'GET never creates a key or setup');
- check(str_contains($html,'automatically prepare shared-hosting migration'),'new defaults are explained before generating a key');
+ check(str_contains($html,'New keys turn on Push and prepare this site for imports automatically')&&str_contains($html,'Generate connection key'),'new defaults are explained before generating a key');
  check(rejected(fn()=>render(['zoer_connection_action'=>'rotate','_wpnonce'=>'invalid'])),'bad nonce rejects key generation');
  $GLOBALS['fixtureSsl']=false;check(rejected(fn()=>render($post)),'HTTP rejects key generation');$GLOBALS['fixtureSsl']=true;
  $GLOBALS['fixtureAdmin']=false;check(render($post)===''&&!get_option(ConnectionKey::OPTION),'non-admin cannot create a connection');$GLOBALS['fixtureAdmin']=true;
