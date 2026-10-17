@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.6.0
+Stable tag: 0.7.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,9 @@ Large local exports run in a DDEV CLI worker independently of HTTP time limits. 
 Upload and activate the plugin. Open Tools > Zoer Connect to generate connection info and configure direction permissions. New connection keys prepare shared-hosting migration automatically. If storage or hosting compatibility blocks preparation, resolve the administrator diagnostics and save Push permissions to retry; existing incomplete setups retain manual recovery controls. Private storage must be outside the public document root. Deactivation/uninstall preserve private journals; do not remove the connector or MU bootstrap during an active transfer.
 
 == Changelog ==
+
+= 0.7.0 =
+Adds the authenticated, read-only GET /theme-overrides (push or pull permission). It lists a block theme's Site Editor copies, meaning saved templates, template parts and styles, which override the theme's files. It returns names and dates only. Zoer uses it to warn before a code-only theme push whose changes those copies would hide. Status reports the themeOverrides capability.
 
 = 0.6.0 =
 Includes the unreleased 0.5.4 changes. Each completed import or rollback commits a new opaque publication identifier. Public HTML carries it in a zoer-publication meta tag and an X-Zoer-Publication header, and singular pages carry a revision of their post, so Zoer can check what anonymous visitors actually receive after a transfer. The authenticated GET /publication lists the expected identifier, home page and recently changed pages; POST /cache/purge runs the known WordPress cache purges now. Cache purges leave a per-layer receipt: cache plugins report "requested" (their hooks give no confirmation), the object cache "flushed" or "failed"; hosting and CDN caches are outside WordPress and need the provider's purge.

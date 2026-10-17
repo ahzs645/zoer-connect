@@ -2,7 +2,7 @@
 namespace ZoerConnect;
 
 final class Plugin {
-    public const VERSION = '0.6.0';
+    public const VERSION = '0.7.0';
     private static bool $applicationPassword = false;
     public static function boot(): void {
         add_action('application_password_did_authenticate', static function () { self::$applicationPassword = true; });
@@ -213,8 +213,10 @@ final class Plugin {
             $capabilities['compactImportResponses']=true;
             // 0.6.0: publication identity in public HTML (GET /publication) and per-layer cache receipts (POST /cache/purge).
             $capabilities['publicationIdentity']=true;$capabilities['cacheReceipts']=true;
+            // 0.7.0: GET /theme-overrides lists a block theme's Site Editor copies (names and dates only).
+            $capabilities['themeOverrides']=true;
             foreach(['replacementRules','replacementVariants','reviewPause','createTables','authorMapping','keepActivePlugins','lateFence','importPauseResume','importCleanup','importList','siteReplace','cachePurge','databaseFilters','resourceModes','mediaSince','diagnostics','safeErrors'] as $capability)$capabilities[$capability]=true;
-            return ['version' => '0.6.0', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'transferLimits'=>['manifestMaxBytes'=>8388608,'maxFileBytes'=>TransferStorage::FILE_BYTES,'quotaBytes'=>TransferStorage::quota(),'reserveBytes'=>TransferStorage::RESERVE_BYTES],'batchLimits'=>BatchUpload::limits()];
+            return ['version' => '0.7.0', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'transferLimits'=>['manifestMaxBytes'=>8388608,'maxFileBytes'=>TransferStorage::FILE_BYTES,'quotaBytes'=>TransferStorage::quota(),'reserveBytes'=>TransferStorage::RESERVE_BYTES],'batchLimits'=>BatchUpload::limits()];
     }
     public static function routes(): void {
         $register = static function ($path, $method, $handler) {
@@ -223,7 +225,7 @@ final class Plugin {
                     $auth=self::authorize($request);if(is_wp_error($auth))return $auth;
                     $record=get_option(ConnectionKey::OPTION,null);
                     // Diagnostics are read-only preflight data for either transfer direction.
-                    $scopes=str_starts_with($path,'/exports')?['pull']:($path==='/status'?['status']:(in_array($path,['/diagnostics','/publication'],true)?['push','pull']:['push']));
+                    $scopes=str_starts_with($path,'/exports')?['pull']:($path==='/status'?['status']:(in_array($path,['/diagnostics','/publication','/theme-overrides'],true)?['push','pull']:['push']));
                     $permitted=is_array($record)&&array_filter($scopes,static fn($scope)=>ConnectionKey::permits($record,$scope));
                     if(($scopes===['pull']||$record!==null) && !$permitted)return new \WP_Error('zoer_permission_disabled',implode(' or ',array_map('ucfirst',$scopes)).' permission is disabled on this site.',['status'=>403]);
                     return true;
@@ -255,6 +257,7 @@ final class Plugin {
         $register('/status', 'GET', static fn()=>self::statusView(get_option(ConnectionKey::OPTION,null)));
         $register('/diagnostics','GET',static function(){global $wpdb;return Diagnostics::collect($wpdb);});
         $register('/publication','GET',static function(){global $wpdb;require_once __DIR__.'/Publication.php';return Publication::expected($wpdb);});
+        $register('/theme-overrides','GET',static function($r){global $wpdb;require_once __DIR__.'/ThemeOverrides.php';$active=(string)get_stylesheet();$theme=ThemeOverrides::theme($r['theme'],$active);$dir=trailingslashit(get_theme_root($theme)).$theme;$folders=function_exists('get_block_theme_folders')?get_block_theme_folders($theme):[];return ThemeOverrides::summary($wpdb,$theme,$active,is_dir($dir)?$dir:null,is_array($folders)?$folders:[]);});
         $register('/cache/purge','POST',static function(){require_once __DIR__.'/CachePurge.php';return ['receipt'=>CachePurge::purgeNow()];});
         $register('/exports/paged', 'POST', static function($r){global $wpdb,$wp_version;$b=$r->get_json_params();if(!is_array($b))throw new \InvalidArgumentException('JSON selections required.');if(($b['snapshotMode']??null)==='maintenance'&&empty($_SERVER['HTTP_X_ZOER_CONNECTION']))throw new \InvalidArgumentException('Source pause requires a connection key.');return self::exports(true)->create($b,self::exportSource(home_url(),site_url(),$wpdb->prefix,(string)$wp_version,ABSPATH),self::activeResources());});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})/step','POST',static function($r){global $wpdb;return self::exports(true)->step($r['id'],static fn($p,array $filters=[])=>DatabaseExporter::write($wpdb,$p,null,40,$filters),$wpdb);});
@@ -302,7 +305,7 @@ final class Plugin {
     }
     public static function admin(): void {
         if (!current_user_can('manage_options')) return;
-        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.6.0 — WordPress transfers and recovery.</p>';
+        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.7.0 — WordPress transfers and recovery.</p>';
         require_once __DIR__.'/AdminPage.php';
         AdminPage::render();
         echo '</div>';
