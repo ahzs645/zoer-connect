@@ -3,6 +3,7 @@ namespace ZoerConnect;
 
 final class Plugin {
     public const VERSION = '0.7.0';
+    public const THEME_OVERRIDES_ROUTE = '/theme-overrides/(?P<theme>[a-z0-9][a-z0-9._-]{0,79})';
     private static bool $applicationPassword = false;
     public static function boot(): void {
         add_action('application_password_did_authenticate', static function () { self::$applicationPassword = true; });
@@ -225,7 +226,7 @@ final class Plugin {
                     $auth=self::authorize($request);if(is_wp_error($auth))return $auth;
                     $record=get_option(ConnectionKey::OPTION,null);
                     // Diagnostics are read-only preflight data for either transfer direction.
-                    $scopes=str_starts_with($path,'/exports')?['pull']:($path==='/status'?['status']:(in_array($path,['/diagnostics','/publication','/theme-overrides'],true)?['push','pull']:['push']));
+                    $scopes=str_starts_with($path,'/exports')?['pull']:($path==='/status'?['status']:(in_array($path,['/diagnostics','/publication','/theme-overrides',self::THEME_OVERRIDES_ROUTE],true)?['push','pull']:['push']));
                     $permitted=is_array($record)&&array_filter($scopes,static fn($scope)=>ConnectionKey::permits($record,$scope));
                     if(($scopes===['pull']||$record!==null) && !$permitted)return new \WP_Error('zoer_permission_disabled',implode(' or ',array_map('ucfirst',$scopes)).' permission is disabled on this site.',['status'=>403]);
                     return true;
@@ -257,7 +258,10 @@ final class Plugin {
         $register('/status', 'GET', static fn()=>self::statusView(get_option(ConnectionKey::OPTION,null)));
         $register('/diagnostics','GET',static function(){global $wpdb;return Diagnostics::collect($wpdb);});
         $register('/publication','GET',static function(){global $wpdb;require_once __DIR__.'/Publication.php';return Publication::expected($wpdb);});
-        $register('/theme-overrides','GET',static function($r){global $wpdb;require_once __DIR__.'/ThemeOverrides.php';$active=(string)get_stylesheet();$theme=ThemeOverrides::theme($r['theme'],$active);$dir=trailingslashit(get_theme_root($theme)).$theme;$folders=function_exists('get_block_theme_folders')?get_block_theme_folders($theme):[];return ThemeOverrides::summary($wpdb,$theme,$active,is_dir($dir)?$dir:null,is_array($folders)?$folders:[]);});
+        // The theme can be a path segment (gateways that only pass declared query keys) or ?theme=; default: the active theme.
+        $themeOverrides=static function($r){global $wpdb;require_once __DIR__.'/ThemeOverrides.php';$active=(string)get_stylesheet();$theme=ThemeOverrides::theme($r['theme'],$active);$dir=trailingslashit(get_theme_root($theme)).$theme;$folders=function_exists('get_block_theme_folders')?get_block_theme_folders($theme):[];return ThemeOverrides::summary($wpdb,$theme,$active,is_dir($dir)?$dir:null,is_array($folders)?$folders:[]);};
+        $register('/theme-overrides','GET',$themeOverrides);
+        $register(self::THEME_OVERRIDES_ROUTE,'GET',$themeOverrides);
         $register('/cache/purge','POST',static function(){require_once __DIR__.'/CachePurge.php';return ['receipt'=>CachePurge::purgeNow()];});
         $register('/exports/paged', 'POST', static function($r){global $wpdb,$wp_version;$b=$r->get_json_params();if(!is_array($b))throw new \InvalidArgumentException('JSON selections required.');if(($b['snapshotMode']??null)==='maintenance'&&empty($_SERVER['HTTP_X_ZOER_CONNECTION']))throw new \InvalidArgumentException('Source pause requires a connection key.');return self::exports(true)->create($b,self::exportSource(home_url(),site_url(),$wpdb->prefix,(string)$wp_version,ABSPATH),self::activeResources());});
         $register('/exports/paged/(?P<id>[a-f0-9]{32})/step','POST',static function($r){global $wpdb;return self::exports(true)->step($r['id'],static fn($p,array $filters=[])=>DatabaseExporter::write($wpdb,$p,null,40,$filters),$wpdb);});

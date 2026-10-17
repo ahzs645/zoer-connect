@@ -45,6 +45,11 @@ try{
  $connection['push']=true;$connection['pull']=false;check($permission($native)===true,'diagnostics allowed with Push only');
  $connection['push']=false;$connection['pull']=true;check($permission($native)===true,'diagnostics allowed with Pull only');
  $connection['pull']=false;$denied=$permission($native);check($denied instanceof WP_Error&&$denied->data['status']===403,'diagnostics refused without Push or Pull');
+ foreach(['/theme-overrides',\ZoerConnect\Plugin::THEME_OVERRIDES_ROUTE] as $route){$themePermission=$routes[$route]['GET']['permission_callback'];
+  $connection['push']=true;$connection['pull']=false;check($themePermission($native)===true,"$route allowed with Push only");
+  $connection['push']=false;$connection['pull']=true;check($themePermission($native)===true,"$route allowed with Pull only");
+  $connection['pull']=false;check($themePermission($native)->data['status']===403,"$route refused without Push or Pull");}
+ check(preg_match('#^'.\ZoerConnect\Plugin::THEME_OVERRIDES_ROUTE.'$#','/theme-overrides/twentytwentyfive')===1&&preg_match('#^'.\ZoerConnect\Plugin::THEME_OVERRIDES_ROUTE.'$#','/theme-overrides/../x')===0,'theme path segment validated');
  check($routes['/exports']['POST']['permission_callback']($native)->data['status']===403&&$routes['/jobs']['POST']['permission_callback']($native)->data['status']===403,'push and pull scopes unchanged');
  [,$other]=ConnectionKey::create(1);$saved=$connection;$connection=$other+['pull'=>true];check($permission($native)->data['status']===401,'diagnostics require the current key');$connection=$saved;
  $connection['push']=true;
