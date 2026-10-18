@@ -1,7 +1,7 @@
 {
   "version": "0.7.0",
   "qualified": true,
-  "qualification": "owner-approved release without live hosting or updater qualification (pending approval); see evidence",
+  "qualification": "owner-approved release without live hosting or updater qualification (2026-10-17); see evidence",
   "evidence": "releases/0.7.0.md",
   "zipSha256": "32e11fff19e74cacc2f7f7131be0080a27e313c012affc04315b63aeb50e580b",
   "files": {
