@@ -234,3 +234,22 @@ Large manifests bind exact paths/sizes and `digestFormat: "sha256-blocks-v1"`: `
 Hosted quotas are configured in Tools → Zoer Connect, or by `ZOER_CONNECT_TRANSFER_QUOTA_BYTES` in wp-config.php (which overrides the option). Zoer's backend and DDEV bridge use `ZOER_WORDPRESS_TRANSFER_QUOTA_BYTES`; configure both processes consistently. These are per-transfer incoming-byte quotas, not a shared account-wide reservation: simultaneous transfers and backup originals can require additional space, so checks repeat before allocations and restoration. Quota settings are preserved when importing another site's options. The separate Updraft browser-upload workflow retains its existing 1 GiB/component and 2 GiB/set bounds. Native file-profile downloads and clients that omit `largeTransfer` retain their legacy bounds.
 
 The query budgets follow [MariaDB SET STATEMENT](https://mariadb.com/docs/server/reference/sql-statements/administrative-sql-statements/set-commands/set-statement) and [MySQL MAX_EXECUTION_TIME](https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html). MariaDB documents cooperative interrupt checkpoints rather than a strict request deadline.
+
+## Transfer storage and retention (development)
+
+Transfers includes an on-demand **Measure storage sizes** action. Retained storage includes
+private artifact files and estimated InnoDB data/index sizes for this import's private
+staging, backup and ledger tables. This is not the original transfer payload size or
+a filesystem allocation guarantee. Measurements are bounded, dated and cached; an
+incomplete scan is explicitly a lower bound. Ordinary admin page loads do not walk files.
+
+**Automatic backup cleanup** is opt-in, defaults to 30 days and accepts 1–365 days.
+It runs daily through WordPress cron, preserving the newest retained successful import
+(even when older than the age limit), active/reused imports and all history journals.
+The import engine rechecks eligibility while holding its existing lock, retains
+destination binding and uses its normal resumable cleanup. Invalid journals or missing
+completion dates stop automatic deletion. Sites with cron disabled need an external
+cron runner. Cleanup permanently removes rollback data; enabling it is an administrator decision.
+
+This development change is covered by local retention/admin/import regression tests.
+Live hosting, cron scheduling and large-table cleanup still require qualification.

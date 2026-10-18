@@ -59,6 +59,7 @@ test: lint
 	php tests/export-source.php
 	php tests/import-admin.php
 	php tests/admin-transfers.php
+	php tests/retention.php
 	php tests/admin-page.php
 	php tests/request-drain.php
 

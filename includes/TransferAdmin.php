@@ -1,5 +1,6 @@
 <?php
 namespace ZoerConnect;
+require_once __DIR__.'/TransferRetention.php';
 
 /** Administrator view of private import journals, with explicit backup cleanup for finished imports.
  * Listing reads journals without the import lock or credential generation; cleanup goes through TransferImport. */
@@ -7,7 +8,7 @@ final class TransferAdmin {
     public const TERMINAL=['complete','rolled_back','cancelled'];
     public static function boot(): void {add_action('admin_post_zoer_import_cleanup',[self::class,'cleanup']);}
     /** Newest first, at most 50: [{id, kind, phase, createdAt, target, cleanedUp}]. */
-    public static function imports(string $private): array {
+    public static function imports(string $private,int $limit=50): array {
         $root=realpath($private);if(!$root||is_link($private))return [];$out=[];
         foreach(glob($root.'/import-*',GLOB_ONLYDIR)?:[] as $dir){
             $path=$dir.'/state.json';
@@ -17,7 +18,7 @@ final class TransferAdmin {
             $out[]=['id'=>$m[1],'kind'=>in_array($s['kind']??null,['transfer','replace'],true)?$s['kind']:'transfer','phase'=>is_string($s['phase']??null)?$s['phase']:'unknown','createdAt'=>is_string($s['createdAt']??null)?$s['createdAt']:'','target'=>is_string($s['target']??null)?$s['target']:'','cleanedUp'=>($s['cleanedUp']??false)===true];
         }
         usort($out,static fn($a,$b)=>strcmp($b['createdAt'],$a['createdAt'])?:strcmp($a['id'],$b['id']));
-        return array_slice($out,0,50);
+        return $limit>0?array_slice($out,0,$limit):$out;
     }
     private static function supported(): bool {require_once __DIR__.'/TransferImport.php';return method_exists(TransferImport::class,'adminCleanup');}
     public static function cleanup(): void {
@@ -47,12 +48,17 @@ final class TransferAdmin {
         try{$imports=self::imports(Plugin::storageRoot());}catch(\Throwable $e){$imports=[];}
         echo '<section class="zc-card" id="zoer-transfers"><h2>Transfers</h2><p class="zc-lead">Recent imports into this site. Finished imports keep backups for rollback until you clean them up.</p>';
         if(isset($_GET['zoer_cleanup']))echo '<div class="notice notice-success inline"><p>Import backups cleaned up.</p></div>';
+        TransferRetention::render();
         if(!$imports){echo '<p class="zc-empty">No imports recorded.</p></section>';return;}
         $supported=self::supported();
-        echo '<div class="zc-table-wrap"><table class="widefat striped"><caption class="screen-reader-text">Recent imports</caption><thead><tr><th scope="col">Import</th><th scope="col">Kind</th><th scope="col">Phase</th><th scope="col">Created</th><th scope="col">Destination</th><th scope="col">Backups</th></tr></thead><tbody>';
+        echo '<div class="zc-table-wrap"><table class="widefat striped"><caption class="screen-reader-text">Recent imports</caption><thead><tr><th scope="col">Import</th><th scope="col">Kind</th><th scope="col">Phase</th><th scope="col">Created</th><th scope="col">Destination</th><th scope="col">Retained storage</th><th scope="col">Backups</th></tr></thead><tbody>';
         foreach($imports as $i){
             $tone=in_array($i['phase'],['complete'],true)?'is-ok':(in_array($i['phase'],self::TERMINAL,true)?'is-off':'is-warn');
             echo '<tr><td><code>'.esc_html(substr($i['id'],0,12)).'</code></td><td>'.esc_html($i['kind']).'</td><td><span class="zc-badge '.$tone.'">'.esc_html(str_replace('_',' ',$i['phase'])).'</span></td><td class="zc-nowrap">'.esc_html($i['createdAt']).'</td><td>'.esc_html($i['target']).'</td><td>';
+            $size=$i['cleanedUp']?['bytes'=>0,'complete'=>true]:TransferRetention::size($i['id']);
+            echo $size?esc_html(($size['complete']?'':'At least ').TransferRetention::format($size['bytes'])):'Not measured';
+            if($size&&isset($size['measuredAt']))echo '<br><small>'.esc_html($size['measuredAt']).'</small>';
+            echo '</td><td>';
             if($i['cleanedUp'])echo 'Cleaned up';
             elseif(!in_array($i['phase'],self::TERMINAL,true))echo 'Retained (import active)';
             elseif(!$supported)echo 'Retained';

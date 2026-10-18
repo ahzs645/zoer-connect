@@ -763,12 +763,30 @@ final class TransferImport {
     /** WordPress administrator (manage_options) cleanup: any credential generation,
      * still bound to this destination and still limited to terminal imports. */
     public function adminCleanup(string $id): array {return $this->cleanupImport($id,true);}
-    private function cleanupImport(string $id,bool $anyOwner): array {
-        return $this->locked(function()use($id,$anyOwner){
+    /** Scheduled cleanup repeats the retention election inside the import lock. */
+    public function retentionCleanup(string $id,int $cutoff): array {return $this->cleanupImport($id,true,$cutoff);}
+    private function cleanupImport(string $id,bool $anyOwner,?int $cutoff=null): array {
+        return $this->locked(function()use($id,$anyOwner,$cutoff){
             $s=$this->read($id,$anyOwner);
             if($s['cleanedUp']??false)return $this->summary($s);
             if(!in_array($s['phase'],self::TERMINAL,true))throw new \RuntimeException('Only complete, rolled back or cancelled imports can be cleaned up.');
             foreach(glob($this->private.'/import-*/state.json')?:[] as $path){$other=json_decode(file_get_contents($path),true,512,JSON_THROW_ON_ERROR);if(($other['reuseImportId']??null)===$id&&!in_array($other['phase'],self::TERMINAL,true))throw new \RuntimeException('Another import is reusing these uploads.');}
+            if($cutoff!==null){
+                $newest=null;$newestTime=0;
+                foreach(glob($this->private.'/import-*/state.json')?:[] as $path){
+                    if(is_link(dirname($path))||is_link($path))throw new \RuntimeException('Unsafe import journal.');
+                    $other=json_decode(file_get_contents($path),true,512,JSON_THROW_ON_ERROR);
+                    if(!is_array($other)||!in_array($other['phase']??'',self::TERMINAL,true))return $this->summary($s);
+                    if(($other['target']??null)!==$this->target)continue;
+                    if(($other['phase']??'')==='complete'&&!($other['cleanedUp']??false)){
+                        $stamp=strtotime($other['finishedAt']??$other['createdAt']??'');
+                        if($stamp===false)return $this->summary($s);
+                        if($stamp>=$newestTime){$newest=$other['id']??basename(dirname($path));$newestTime=$stamp;}
+                    }
+                }
+                $stamp=strtotime($s['finishedAt']??$s['createdAt']??'');
+                if($newest===null||$newest===$id||$stamp===false||$stamp>=$cutoff||($s['phase']==='complete'&&$stamp>=$newestTime))return $this->summary($s);
+            }
             $deadline=microtime(true)+2;
             while(($s['cleanupCursor']??0)<count($s['tables'])){
                 $this->table($s['tables'][$s['cleanupCursor']??0])->cleanup();$s['cleanupCursor']=($s['cleanupCursor']??0)+1;$this->save($s);
