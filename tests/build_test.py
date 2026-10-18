@@ -62,4 +62,21 @@ with ZipFile(archive) as z:
         'zoer-connect/includes/WriteFence.php',
     }, sorted(z.namelist())
     assert z.testzip() is None
+# A release-candidate build stamps only the ZIP's plugin header; the source and file name stay X.Y.Z.
+import os
+env = {**os.environ, 'ZOER_CONNECT_PRERELEASE': 'rc.3'}
+subprocess.run(['python3', 'scripts/build.py'], cwd=root, check=True, capture_output=True, env=env)
+stamped = archive.read_bytes()
+subprocess.run(['python3', 'scripts/build.py'], cwd=root, check=True, capture_output=True, env=env)
+assert stamped == archive.read_bytes() and stamped != first, 'Release-candidate build must be reproducible and differ from the stable build'
+with ZipFile(archive) as z:
+    header = z.read('zoer-connect/zoer-connect.php').decode()
+    assert re.search(r'^ \* Version: ' + re.escape(version) + r'-rc\.3$', header, re.M), 'Release-candidate header not stamped'
+    assert z.read('zoer-connect/includes/Plugin.php') == (root/'includes/Plugin.php').read_bytes(), 'Only the plugin header may change'
+assert re.search(r'Version: ' + re.escape(version) + r'\n', (root/'zoer-connect.php').read_text()), 'Source header changed'
+bad = subprocess.run(['python3', 'scripts/build.py'], cwd=root, capture_output=True, env={**os.environ, 'ZOER_CONNECT_PRERELEASE': 'rc.1; x'})
+assert bad.returncode != 0, 'Malformed prerelease suffix accepted'
+subprocess.run(['python3', 'scripts/build.py'], cwd=root, check=True, capture_output=True)
+assert archive.read_bytes() == first, 'Stable rebuild changed'
 print('ZIP layout and deterministic build passed')
+print('Release-candidate build stamps only the plugin header')

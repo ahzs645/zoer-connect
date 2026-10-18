@@ -2,7 +2,7 @@
 // Tools → Zoer Connect page layout against the WordPress boundary fixture: readiness header,
 // setup steps, tab placement, preserved form contract, scoped CSS and markup hygiene.
 require __DIR__.'/fixtures/admin-wordpress.php';
-foreach(['Selection','ExportProfile','FileExporter','ExportAdmin','TransferStorage','TransferAdmin','TransferImport','AdminPage'] as $class)require_once __DIR__.'/../includes/'.$class.'.php';
+foreach(['Selection','ExportProfile','FileExporter','ExportAdmin','TransferStorage','TransferAdmin','TransferImport','GitHubUpdater','AdminPage'] as $class)require_once __DIR__.'/../includes/'.$class.'.php';
 use ZoerConnect\ConnectionKey;use ZoerConnect\ImportAdmin;use ZoerConnect\Plugin;
 function check($ok,$message){if(!$ok)throw new RuntimeException($message);echo "PASS $message\n";}
 function page(array $post=[]): string {$_POST=$post;$_GET=[];$_SERVER['REQUEST_METHOD']=$post?'POST':'GET';ob_start();try{Plugin::admin();return ob_get_contents();}finally{ob_end_clean();}}
@@ -30,11 +30,12 @@ try{
  $connection=panel($html,'connection');$settings=panel($html,'settings');$activity=panel($html,'activity');
  check(str_contains($connection,'id="zoer-import-setup"')&&str_contains($connection,'id="zoer-storage"')&&!str_contains($settings,'id="zoer-storage"'),'incomplete imports and storage are fixed on the Connection tab');
  check(str_contains($activity,'<h2>Transfers</h2>')&&str_contains($activity,'id="zoer-exports"')&&str_contains($settings,'Application passwords'),'activity and settings tabs hold history, exports and advanced options');
+ check(str_contains($settings,'value="zoer_update_channel"')&&str_contains($settings,'Also offer release candidates')&&str_contains($settings,'fixture:zoer_update_channel'),'settings tab offers the update channel with its nonce');
  foreach(['connection','activity','settings'] as $tab)check(str_contains($html,'aria-controls="zoer-panel-'.$tab.'"')&&panel($html,$tab)!=='','tab '.$tab.' controls an existing panel');
  // Form contract: every action, field and nonce name of the previous page is still posted.
  foreach(['name="zoer_connection_action" value="rotate"','name="allow_push"','name="allow_pull"','name="zoer_connection_action" value="permissions"','name="zoer_import_setup_action" value="shared"','name="replacement_accepted" value="1"','name="zoer_import_setup_action" value="install"','name="zoer_storage_path"','name="zoer_storage_save" value="1"','name="zoer_quota_bytes"','name="zoer_quota_save" value="1"','name="action" value="zoer_export_profile"','name="themesMode"','name="pluginsItems"','name="mediaSince"','name="excludes"','value="fixture:zoer_connection_settings"','value="fixture:zoer_import_setup_shared"','value="fixture:zoer_import_setup_install"','value="fixture:zoer_connect_storage"','value="fixture:zoer_connect_quota"','value="fixture:zoer_export_profile"'] as $needle)if(!str_contains($html,$needle))throw new RuntimeException('Missing form contract: '.$needle);
  check(true,'form actions, field names and nonce actions preserved');
- check(substr_count($html,'action="/tools.php?page=zoer-connect"')===2&&substr_count($html,'action="/admin-post.php"')===1,'connection forms keep their action URL; export form posts to admin-post');
+ check(substr_count($html,'action="/tools.php?page=zoer-connect"')===2&&substr_count($html,'action="/admin-post.php"')===2,'connection forms keep their action URL; the export and update-channel forms post to admin-post');
  // Markup hygiene: balanced tags, unique IDs, no inline style attributes, scoped CSS, labelled switches.
  check(balanced($html),'page markup is balanced');
  preg_match_all('~\sid="([^"]+)"~',$html,$ids);check(count($ids[1])===count(array_unique($ids[1])),'element IDs are unique');

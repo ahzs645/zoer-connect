@@ -44,6 +44,11 @@ jobs:
       - name: Verify qualified ZIP checksum
         if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
         run: python3 scripts/build-update-manifest.py
+      - name: Build the release-candidate ZIP and its update manifest
+        if: startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-')
+        run: |
+          ZOER_CONNECT_PRERELEASE="${GITHUB_REF_NAME#*-}" python3 scripts/build.py
+          python3 scripts/build-update-manifest.py --prerelease
       - name: Verify development ZIP checksum
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: python3 scripts/check-release.py --development --package
@@ -59,10 +64,9 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           version="${version%%-*}"
-          assets=("dist/zoer-connect-$version.zip" "dist/zoer-connect-$version.zip.sha256")
-          if [[ "$GITHUB_REF_NAME" != *-* ]]; then
-            assets+=("dist/update.json")
-          fi
+          # Prereleases carry update.json too: only sites that opted into release candidates read it,
+          # because releases/latest resolves to stable releases.
+          assets=("dist/zoer-connect-$version.zip" "dist/zoer-connect-$version.zip.sha256" "dist/update.json")
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             mkdir -p "$RUNNER_TEMP/existing-release"
             for asset in "${assets[@]}"; do

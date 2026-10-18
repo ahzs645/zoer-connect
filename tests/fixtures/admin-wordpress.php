@@ -13,7 +13,7 @@ function is_ssl(){return $GLOBALS['fixtureSsl'];}
 function is_multisite(){return false;}
 function wp_verify_nonce($nonce,$action){return $nonce==='fixture:'.$action;}
 function check_admin_referer($action){if(!wp_verify_nonce($_POST['_wpnonce']??'',$action))throw new RuntimeException('Invalid nonce.');}
-function wp_nonce_field($action){echo '<input type="hidden" name="_wpnonce" value="'.esc_attr('fixture:'.$action).'">';}
+function wp_nonce_field($action,$name='_wpnonce',$referer=true,$echo=true){$html='<input type="hidden" name="'.esc_attr($name).'" value="'.esc_attr('fixture:'.$action).'">';if($echo)echo $html;return $html;}
 function wp_die($message){throw new RuntimeException($message);}
 function wp_unslash($value){return $value;}
 function sanitize_key($value){return preg_replace('/[^a-z0-9_-]/','',strtolower($value));}

@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.7.0
+Stable tag: 0.8.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,9 @@ Large local exports run in a DDEV CLI worker independently of HTTP time limits. 
 Upload and activate the plugin. Open Tools > Zoer Connect to generate connection info and configure direction permissions. New connection keys prepare shared-hosting migration automatically. If storage or hosting compatibility blocks preparation, resolve the administrator diagnostics and save Push permissions to retry; existing incomplete setups retain manual recovery controls. Private storage must be outside the public document root. Deactivation/uninstall preserve private journals; do not remove the connector or MU bootstrap during an active transfer.
 
 == Changelog ==
+
+= 0.8.0 =
+Adds an optional release-candidate update channel. In Tools → Zoer Connect → Settings → Updates, an administrator who can update plugins can also offer release candidates; the site then updates from the newest stable release or release candidate, still asking first and verifying each download against its published SHA-256. Off by default, so sites stay on stable releases. Release candidate builds carry their own version (for example 0.8.0-rc.1) so WordPress orders them before the final release.
 
 = 0.7.0 =
 Adds the authenticated, read-only GET /theme-overrides (push or pull permission). It lists a block theme's Site Editor copies, meaning saved templates, template parts and styles, which override the theme's files. It returns names and dates only. Zoer uses it to warn before a code-only theme push whose changes those copies would hide. Status reports the themeOverrides capability.

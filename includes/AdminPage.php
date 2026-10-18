@@ -29,6 +29,7 @@ final class AdminPage {
         echo '<div class="zc-panel" role="tabpanel" id="zoer-panel-settings" aria-labelledby="zoer-tab-settings"><h2 class="screen-reader-text">Settings</h2>';
         if($state['imports'])echo $html['imports'];
         if($state['storage'])echo $html['storage'];
+        echo GitHubUpdater::settingsCard();
         echo '<details class="zc-card zc-collapsible"><summary><span class="zc-summary-title">Application passwords</span> <span class="zc-summary-hint">Legacy API clients</span></summary>';
         echo '<p>API clients can also sign in with a WordPress application password. Push permission applies to them once a connection key exists.</p>';
         echo '<details class="zc-more"><summary>Learn more</summary><p>Application passwords inherit the account’s capabilities; they are not restricted to this plugin. Revoke the application password from your profile to disconnect.</p></details>';
