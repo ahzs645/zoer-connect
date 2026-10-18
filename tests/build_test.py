@@ -58,6 +58,7 @@ with ZipFile(archive) as z:
         'zoer-connect/includes/TableStage.php',
         'zoer-connect/includes/ThemeOverrides.php',
         'zoer-connect/includes/TransferAdmin.php',
+        'zoer-connect/includes/TransferRetention.php',
         'zoer-connect/includes/TransferImport.php',
         'zoer-connect/includes/WriteFence.php',
     }, sorted(z.namelist())
