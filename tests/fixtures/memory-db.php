@@ -6,7 +6,7 @@ if(!defined('ARRAY_A'))define('ARRAY_A','ARRAY_A');
 if(!defined('ARRAY_N'))define('ARRAY_N','ARRAY_N');
 final class MemoryDb {
  public string $prefix='wp_',$options='wp_options',$users='wp_users',$usermeta='wp_usermeta',$posts='wp_posts',$dbname='memory',$last_error='';
- public array $tables=[];public array $log=[];public ?Closure $hook=null;public string $lowerCaseTableNames='0';
+ public array $tables=[];public array $log=[];public ?Closure $hook=null;public string $lowerCaseTableNames='0';public int $maxAllowedPacket=67108864;
  public function __construct(string $prefix='wp_'){$this->prefix=$prefix;foreach(['options','users','usermeta','posts'] as $t)$this->$t=$prefix.$t;}
  /** Define a table from a SHOW CREATE TABLE style statement. */
  public function define(string $ddl,array $rows=[]): void {
@@ -56,6 +56,7 @@ final class MemoryDb {
   if(preg_match('/^SELECT (?:GET_LOCK|RELEASE_LOCK)\(/',$sql))return [[['v'=>'1']],['v']];
   if($sql==='SELECT @@SESSION.sql_mode')return [[['v'=>'STRICT_TRANS_TABLES,NO_AUTO_VALUE_ON_ZERO']],['v']];
   if($sql==='SELECT @@lower_case_table_names')return [[['v'=>$this->lowerCaseTableNames]],['v']];
+  if($sql==='SELECT @@SESSION.max_allowed_packet')return [[['v'=>(string)$this->maxAllowedPacket]],['v']];
   if(preg_match("/^SHOW TABLES LIKE ('(?:[^'\\\\]|\\\\.)*')$/s",$sql,$m)){$re=self::likeRegex(self::literal($m[1])).($this->lowerCaseTableNames==='0'?'':'i');$names=array_values(array_filter(array_keys($this->tables),fn($n)=>preg_match($re,$n)));sort($names);return [array_map(fn($n)=>['n'=>$this->lowerCaseTableNames==='0'?$n:strtolower($n)],$names),['n']];}
   if($sql==='SHOW TABLE STATUS'){$names=array_keys($this->tables);sort($names);return [array_map(fn($n)=>['Name'=>$this->lowerCaseTableNames==='0'?$n:strtolower($n),'Engine'=>'InnoDB'],$names),['Name','Engine']];}
   if(preg_match("/^SELECT ENGINE FROM information_schema\.TABLES .*TABLE_NAME='(\w+)'$/",$sql,$m))return [isset($this->tables[$m[1]])?[['e'=>'InnoDB']]:[],['e']];

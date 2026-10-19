@@ -75,9 +75,17 @@ final class TransferImport {
         return ['code'=>'zoer_import_failed','message'=>$message===''?self::GENERIC:$message,'phase'=>$phase];
     }
     public function phase(string $id): ?string {try{$s=$this->read($id);return $s['phase']==='paused'?($s['resumePhase']??'paused'):$s['phase'];}catch(\Throwable $e){return null;}}
-    private function destination(): void {
-        foreach(['home','siteurl'] as $key)if($this->db->get_var($this->db->prepare("SELECT option_value FROM `{$this->db->options}` WHERE option_name=%s",$key))!==$this->target||$this->db->last_error)throw new \RuntimeException('Destination identity changed.');
+    /** The destination's home must be the import target. Its WordPress address (siteurl) is the
+     * target or, for WordPress in its own directory, a folder beneath it (https://example.org/wp);
+     * a job keeps the siteurl it was created with. Returns the current siteurl. */
+    private function destination(?array $s=null): string {
+        $value=fn(string $key)=>$this->db->get_var($this->db->prepare("SELECT option_value FROM `{$this->db->options}` WHERE option_name=%s",$key));
+        $home=$value('home');$siteurl=$value('siteurl');
+        if($this->db->last_error||$home!==$this->target||!is_string($siteurl))throw new \RuntimeException('Destination identity changed.');
+        if($s!==null?$siteurl!==($s['destinationSiteurl']??$this->target):$siteurl!==$this->target&&!self::beneath($siteurl,$this->target))throw new \RuntimeException('Destination identity changed.');
+        return $siteurl;
     }
+    private static function beneath(string $url,string $base): bool {return str_starts_with($url,$base.'/')&&strlen($url)>strlen($base)+1&&!str_ends_with($url,'/')&&!preg_match('~[?#\x00-\x20]|/\.\.?(?:/|$)~',substr($url,strlen($base)));}
     private function exists(string $table): bool {
         $name=$this->db->get_var($this->db->prepare('SHOW TABLES LIKE %s',$this->db->esc_like($table)));
         // lower_case_table_names 1/2 may report a mixed-case name folded.
@@ -146,7 +154,7 @@ final class TransferImport {
     private function replacing(array $s): bool {return ($s['kind']??'transfer')==='replace';}
     public function create(array $body): array {
         return $this->locked(function()use($body){
-            $this->destination();
+            $siteurl=$this->destination();
             $kind=$body['kind']??'transfer';if(!in_array($kind,['transfer','replace'],true))throw new \InvalidArgumentException('Invalid import kind.');$replace=$kind==='replace';
             foreach($body['originalUrls']??[] as $url)if(!is_string($url)||!filter_var($url,FILTER_VALIDATE_URL)||!in_array(parse_url($url,PHP_URL_SCHEME),['http','https'],true))throw new \InvalidArgumentException('Invalid original source URL.');
             if(isset($body['id'])&&is_file($this->dir($body['id']).'/state.json')){
@@ -159,6 +167,9 @@ final class TransferImport {
             $shared=($body['migrationMode']??null)==='shared-replacement';
             if($shared?($body['replacementAccepted']??false)!==true:($body['wordpressOnlyWriters']??false)!==true)throw new \InvalidArgumentException('Confirm the selected migration policy.');
             $options=self::options($body['options']??null,$replace);
+            // 0.3.14 rules replace every source URL with the home URL; files under a separate
+            // WordPress address need the mapped rules that clients sending options get.
+            if($siteurl!==$this->target&&!isset($body['options']))throw new \InvalidArgumentException('This site\'s WordPress address differs from its site address; update Zoer to send import options.');
             if($this->compactResponses&&is_string($body['sourceUrl']??null)&&strlen($body['sourceUrl'])>2048)throw new \InvalidArgumentException('Compact responses require identities of at most 2048 bytes. Use the detailed API.');
             if($replace){
                 foreach(['database','files','reuseImportId','originalUrls','sourceUrl','sourcePrefix','sourcePath','resources'] as $key)if(array_key_exists($key,$body))throw new \InvalidArgumentException('A replace import snapshots this site; omit transfer artifacts.');
@@ -195,7 +206,7 @@ final class TransferImport {
             foreach($artifacts as $i=>$a){if(!mkdir($dir.'/artifact-'.$i,0700))throw new \RuntimeException('Cannot create artifact.');if(!$replace)file_put_contents($dir.'/artifact-'.$i.'/data','');}
             $s=['id'=>$id,'phase'=>$replace?'snapshotting':'uploading','migrationMode'=>$shared?'shared-replacement':'verified-workers','target'=>$this->target,'owner'=>$this->owner,'largeTransfer'=>true,'sourceUrl'=>$replace?$this->target:$body['sourceUrl'],'sourcePrefix'=>$replace?$this->db->prefix:$body['sourcePrefix'],'originalUrls'=>$replace?[]:array_values(array_unique([$body['sourceUrl'],...($body['originalUrls']??[])])),'admin'=>$admin,'artifacts'=>$artifacts,'hasDb'=>$hasDb,'hasFiles'=>(bool)$files,'selectedPlugins'=>isset($body['resources']['plugins'])?$body['resources']['plugins']===true:(bool)array_filter($files,fn($f)=>str_starts_with($f['path'],'wp-content/plugins/')),'selectedThemes'=>isset($body['resources']['themes'])?$body['resources']['themes']===true:(bool)array_filter($files,fn($f)=>str_starts_with($f['path'],'wp-content/themes/')),'cursor'=>0,'tables'=>[],'createdAt'=>gmdate('c')];
             // A client that sends no options gets the 0.3.14 replacement rules byte-for-byte.
-            $s+=['kind'=>$kind,'options'=>$options,'legacyReplacements'=>!isset($body['options']),'sourcePath'=>$sourcePath,'samples'=>[],'authors'=>null,'cleanedUp'=>false,'updatedAt'=>$s['createdAt'],'finishedAt'=>null];
+            $s+=['destinationSiteurl'=>$siteurl,'kind'=>$kind,'options'=>$options,'legacyReplacements'=>!isset($body['options']),'sourcePath'=>$sourcePath,'samples'=>[],'authors'=>null,'cleanedUp'=>false,'updatedAt'=>$s['createdAt'],'finishedAt'=>null];
             $s['binding']=hash('sha256',json_encode([$this->owner,$this->target,$body],JSON_THROW_ON_ERROR));
             if($reuse!==null){$s['reuseImportId']=$reuse;$s['phase']='reusing_artifacts';}
             if(!$replace)self::writeIndexes($dir,$artifacts);
@@ -420,8 +431,11 @@ final class TransferImport {
     private function rules(array $s): array {
         if(!isset($s['options'])||($s['legacyReplacements']??false))return Replacement::legacy($s['originalUrls'],$this->target);
         $siteurl=rtrim((string)$this->db->get_var($this->db->prepare("SELECT option_value FROM `{$this->db->options}` WHERE option_name=%s",'siteurl')),'/');
-        $home=rtrim($s['sourceUrl'],'/');$map=[];
-        foreach($s['originalUrls'] as $url){$url=rtrim($url,'/');$map[$url]??=$siteurl!==''&&str_starts_with($url,$home.'/')?$siteurl:$this->target;}
+        $home=rtrim($s['sourceUrl'],'/');$map=[];$base=$home;
+        foreach($s['originalUrls'] as $url){$url=rtrim($url,'/');if($url!==$home&&str_starts_with($url,$home.'/'))$base=$url;$map[$url]??=$siteurl!==''&&str_starts_with($url,$home.'/')?$siteurl:$this->target;}
+        // A destination with WordPress in its own folder serves wp-content, wp-includes and wp-admin
+        // there; a source at its root needs those URLs mapped into that folder.
+        if($base===$home&&$siteurl!==''&&$siteurl!==$this->target)foreach(['wp-content','wp-includes','wp-admin'] as $dir)$map[$home.'/'.$dir]??=$siteurl.'/'.$dir;
         return Replacement::rules($map,$this->target,$this->opt($s)['replacements'],$s['sourcePath']??null,$this->abspath);
     }
     private function sample(array &$s,string $table,string $column,string $before,string $after): void {
@@ -434,7 +448,7 @@ final class TransferImport {
      * snapshot is taken, so any write after that fingerprint aborts activation
      * instead of being silently overwritten by an older snapshot. */
     private function snapshot(array &$s): void {
-        $this->destination();$path=$this->dir($s['id']).'/artifact-0/data';$deadline=microtime(true)+2;
+        $this->destination($s);$path=$this->dir($s['id']).'/artifact-0/data';$deadline=microtime(true)+2;
         if(!($s['snapshotTables']??false)){
             $prefix=$this->db->prefix;$wanted=$this->opt($s)['tables'];
             $names=$this->db->get_col($this->db->prepare('SHOW TABLES LIKE %s',$this->db->esc_like($prefix).'%'));
@@ -523,7 +537,10 @@ final class TransferImport {
             }
             if($s['phase']==='scanning_database'){
                 $o=$this->opt($s);$replace=$this->replacing($s);$deadline=microtime(true)+2;
-                $others=$o['createTables']&&!$replace?$this->otherPrefixes():[];
+                // Ownership is checked whether or not tables may be created: a matching schema does
+                // not make another installation's table (wp_shop_options beside wp_) part of this
+                // site. A replace import already checked its own tables when it staged them.
+                $others=$replace?[]:$this->otherPrefixes();
                 do{
                 $batch=SnapshotStream::read($this->dir($id).'/artifact-0/data',[],$s['scan'],100,true);
                 foreach($batch['records'] as $record){
@@ -536,7 +553,7 @@ final class TransferImport {
                         $k=array_search($source,array_column($s['tables'],'source'),true);if($k===false)continue;
                         $create=$this->db->get_row("SHOW CREATE TABLE `$table`",ARRAY_N);
                         if(!isset($create[1])||SnapshotStream::schema($record['schema'],$source)!==SnapshotStream::schema($create[1],$table,(int)$this->db->get_var('SELECT @@lower_case_table_names')!==0))throw new \RuntimeException('A table schema changed during the replacement snapshot.');
-                        $s['tables'][$k]['schema']=$record['schema'];continue;
+                        $s['tables'][$k]['schema']=$record['schema'];$s['tables'][$k]['binary']=Replacement::binaryColumns($record['schema']);continue;
                     }
                     if(self::claimed($table,$others))throw new \InvalidArgumentException('The table '.$suffix.' would belong to another WordPress installation in this database; refusing to create or replace it.');
                     $create=!$o['createTables']||$this->exists($table)?$this->db->get_row("SHOW CREATE TABLE `$table`",ARRAY_N):null;
@@ -547,7 +564,7 @@ final class TransferImport {
                         if(strlen($table)>48)throw new \InvalidArgumentException('The table name '.$suffix.' is too long to stage.');
                         $created=!isset($create[1]);$replaced=!$created;
                     }
-                    $index=count($s['tables']);$s['tables'][]=['name'=>$table,'source'=>$source,'schema'=>$record['schema'],'id'=>substr(hash('sha256',$id.':'.$index),0,16),'rows'=>0,'chunks'=>0,'replacements'=>0,'created'=>$created,'schemaReplaced'=>$replaced];
+                    $index=count($s['tables']);$s['tables'][]=['name'=>$table,'source'=>$source,'schema'=>$record['schema'],'id'=>substr(hash('sha256',$id.':'.$index),0,16),'rows'=>0,'chunks'=>0,'replacements'=>0,'created'=>$created,'schemaReplaced'=>$replaced,'binary'=>Replacement::binaryColumns($record['schema'])];
                 }
                 $s['scan']=$batch['cursor'];
                 }while(!$s['scan']['done']&&microtime(true)<$deadline);
@@ -583,26 +600,26 @@ final class TransferImport {
                 $this->save($s);return $this->summary($s);
             }
             // Activation fence: staging touches only private tables while WordPress runs.
-            if($this->activation($s)&&in_array($s['phase'],['preparing_tables','reading_database','verifying_tables'],true)){$this->destination();$this->advance($s);return $this->summary($s);}
+            if($this->activation($s)&&in_array($s['phase'],['preparing_tables','reading_database','verifying_tables'],true)){$this->destination($s);$this->advance($s);return $this->summary($s);}
             if($s['phase']==='reserving'){
                 if($this->activation($s)){
                     // Nothing live has changed yet. Check the live tables first without a
                     // fence so a mismatch cancels without ever pausing the site, then
                     // check again from scratch under the fence before any file changes.
                     if(!($s['prechecked']??false)){
-                        $this->destination();
+                        $this->destination($s);
                         try{if(!$this->checkTables($s))return $this->summary($s);}catch(StageChanged $e){return $this->cancelChanged($s,$e);}
                         foreach($s['tables'] as $t)$this->table($t)->resetActivationCheck();
                         $s['prechecked']=true;$s['cursor']=0;$this->save($s);return $this->summary($s);
                     }
                     $this->fence->reserve($id,$s['binding']);
-                    try{return $this->fence->exclusive($id,$s['binding'],function()use(&$s){$this->destination();if($this->checkTables($s)){$s['phase']='preparing_files';$s['cursor']=0;$this->save($s);}return $this->summary($s);});}
+                    try{return $this->fence->exclusive($id,$s['binding'],function()use(&$s){$this->destination($s);if($this->checkTables($s)){$s['phase']='preparing_files';$s['cursor']=0;$this->save($s);}return $this->summary($s);});}
                     catch(StageChanged $e){$this->reopen($s);return $this->cancelChanged($s,$e);}
                 }
                 $this->fence->reserve($id,$s['binding']);
                 $s['phase']='preparing_tables';$s['cursor']=0;$this->save($s);
             }
-            return $this->fence->exclusive($id,$s['binding'],function()use(&$s){$this->destination();$this->advance($s);return $this->summary($s);});
+            return $this->fence->exclusive($id,$s['binding'],function()use(&$s){$this->destination($s);$this->advance($s);return $this->summary($s);});
         },$id);
     }
     /** Activation fence: prove every live table is unchanged since staging before
@@ -649,7 +666,9 @@ final class TransferImport {
             foreach($batch['records'] as $record)if($record['type']==='row'){
                 foreach($s['tables'] as &$t)if($t['source']===$record['table']){
                     $row=$record['row'];$posts=$t['name']===$this->db->prefix.'posts';
-                    foreach($row as $column=>&$v)if(is_string($v)&&($o['replaceGuids']||!$posts||$column!=='guid')){
+                    // Binary, BLOB, BIT and spatial bytes are never text to replace.
+                    $binary=array_flip($t['binary']??Replacement::binaryColumns((string)$t['schema']));
+                    foreach($row as $column=>&$v)if(is_string($v)&&!isset($binary[$column])&&($o['replaceGuids']||!$posts||$column!=='guid')){
                         $before=$v;$v=Replacement::apply($v,$rules,$count);
                         if($count){$t['replacements']=($t['replacements']??0)+$count;$this->sample($s,$t['name'],$column,$before,$v);}
                     }unset($v);
@@ -755,7 +774,7 @@ final class TransferImport {
         });
     }
     public function finish(string $id): array {
-        return $this->locked(function()use($id){$s=$this->read($id);if($s['phase']==='complete')return $this->summary($s);if(!in_array($s['phase'],['verification_required','finishing'],true))throw new \RuntimeException('Import is not ready for final verification.');if($s['phase']==='verification_required'){$this->fence->exclusive($id,$s['binding'],fn()=>$this->destination());$s['phase']='finishing';$this->save($s);}$this->queueMaintenance($s);$this->reopen($s);$s['phase']='complete';$this->save($s);return $this->summary($s);},$id);
+        return $this->locked(function()use($id){$s=$this->read($id);if($s['phase']==='complete')return $this->summary($s);if(!in_array($s['phase'],['verification_required','finishing'],true))throw new \RuntimeException('Import is not ready for final verification.');if($s['phase']==='verification_required'){$this->fence->exclusive($id,$s['binding'],fn()=>$this->destination($s));$s['phase']='finishing';$this->save($s);}$this->queueMaintenance($s);$this->reopen($s);$s['phase']='complete';$this->save($s);return $this->summary($s);},$id);
     }
     /** Terminal imports only: drop this import's private tables, then artifact data
      * and file backups. state.json remains (cleanedUp) and rollback is refused. */
@@ -763,6 +782,18 @@ final class TransferImport {
     /** WordPress administrator (manage_options) cleanup: any credential generation,
      * still bound to this destination and still limited to terminal imports. */
     public function adminCleanup(string $id): array {return $this->cleanupImport($id,true);}
+    /** WordPress administrator (manage_options) recovery after a key reset or revocation: an
+     * unfinished import of an earlier key generation continues under the current key. Journal,
+     * destination binding and request fence are unchanged; the earlier key can no longer act on it. */
+    public function adminAdopt(string $id): array {
+        return $this->locked(function()use($id){
+            $s=$this->read($id,true);
+            if(in_array($s['phase'],self::TERMINAL,true))throw new \RuntimeException('Only an unfinished import can continue with the current key.');
+            if(hash_equals($this->owner,(string)($s['owner']??'')))return $this->summary($s);
+            $s['previousOwners']=[...($s['previousOwners']??[]),(string)($s['owner']??'')];$s['owner']=$this->owner;$s['adoptedAt']=gmdate('c');
+            $this->save($s);return $this->summary($s);
+        },$id);
+    }
     /** Scheduled cleanup repeats the retention election inside the import lock. */
     public function retentionCleanup(string $id,int $cutoff): array {return $this->cleanupImport($id,true,$cutoff);}
     private function cleanupImport(string $id,bool $anyOwner,?int $cutoff=null): array {

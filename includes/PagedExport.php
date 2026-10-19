@@ -57,7 +57,7 @@ final class PagedExport {
             if(!FileExporter::portableHiddenPath($portable))continue;
             if($relative==='wp-content/plugins/zoer-connect'||str_starts_with($relative,'wp-content/plugins/zoer-connect/'))continue;
             if(Selection::excluded($relative,['**/.git/','**/node_modules/','**/.env','**/.env.*','**/*.log',...$j['profile']['excludes']]))continue;
-            $path=$root.'/'.$relative;if(!file_exists($path)&&!is_link($path)){if(in_array($relative,['wp-content/themes','wp-content/plugins','wp-content/uploads','wp-content/mu-plugins'],true))continue;throw new \RuntimeException('Source changed during pull.');}
+            $path=$root.'/'.$relative;if(!file_exists($path)&&!is_link($path)){if(in_array($relative,['wp-content/themes','wp-content/plugins','wp-content/uploads','wp-content/mu-plugins','wp-content/languages'],true))continue;throw new \RuntimeException('Source changed during pull.');}
             $real=realpath($path);if(!$real||!str_starts_with($real,$root.'/')||is_link($path))throw new \RuntimeException('Unsafe source file.');
             for($parent=dirname($path);$parent!==$root;$parent=dirname($parent))if(is_link($parent))throw new \RuntimeException('Symlink source rejected.');
             if(is_dir($path)){$children=scandir($path);if($children===false||count($children)+count($j['queue'])>120000)throw new \RuntimeException('Too many selected files.');foreach(array_reverse($children) as $name)if($name!=='.'&&$name!=='..')$j['queue'][]=$relative.'/'.$name;continue;}

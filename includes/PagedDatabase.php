@@ -3,6 +3,7 @@ namespace ZoerConnect;
 require_once __DIR__.'/SnapshotCursor.php';
 require_once __DIR__.'/DatabaseExporter.php';
 require_once __DIR__.'/TransferStorage.php';
+require_once __DIR__.'/SnapshotStream.php';
 /** Multi-request SQL export only while its source fence is held and the caller
  * has explicitly confirmed that old requests and external writers are stopped.
  * Each committed output part binds a typed table/row cursor and its checksum. */
@@ -21,8 +22,10 @@ final class PagedDatabase {
         $prefix=$db->prefix;if(!preg_match('/^[A-Za-z0-9_]+$/D',$prefix))throw new \RuntimeException('Unsupported table prefix.');
         $folded=(int)$db->get_var('SELECT @@lower_case_table_names')!==0;
         $tables=$db->get_results('SHOW TABLE STATUS',ARRAY_A);if($db->last_error||!is_array($tables))throw new \RuntimeException('Cannot inspect database.');
-        $f=DatabaseExporter::filters($filters);$selected=[];$present=[];
-        foreach($tables as $t){$name=$t['Name'];if($folded&&strncasecmp($name,$prefix,strlen($prefix))===0)$name=$prefix.substr($name,strlen($prefix));if(!str_starts_with($name,$prefix))continue;$present[$name]=true;
+        $f=DatabaseExporter::filters($filters);$selected=[];$present=[];$others=DatabaseExporter::otherInstallations(array_column($tables,'Name'),$prefix,$folded);
+        foreach($tables as $t){$name=$t['Name'];if($folded&&strncasecmp($name,$prefix,strlen($prefix))===0)$name=$prefix.substr($name,strlen($prefix));if(!str_starts_with($name,$prefix))continue;
+            if(DatabaseExporter::claimedBy($name,$others,$folded)!==null){if($f['tables']!==null&&in_array(substr($name,strlen($prefix)),$f['tables'],true))throw new \InvalidArgumentException('The table '.substr($name,strlen($prefix)).' belongs to another WordPress installation in this database.');continue;}
+            $present[$name]=true;
             if($f['tables']!==null&&!in_array(substr($name,strlen($prefix)),$f['tables'],true))continue;
             if(!preg_match('/^[A-Za-z0-9_]+$/D',$name)||strtolower((string)$t['Engine'])!=='innodb')throw new \RuntimeException('Pull requires InnoDB tables.');$selected[]=$name;
         }
@@ -45,7 +48,9 @@ final class PagedDatabase {
         };
         try {
             if(!chmod($path,0600)||!ftruncate($out,$start)||fseek($out,$start)!==0)throw new \RuntimeException('Cannot resume snapshot part.');
-            if($start===0)$write("-- Zoer Connect source-maintenance snapshot\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\nSET SQL_MODE='NO_AUTO_VALUE_ON_ZERO';\n");
+            // One snapshot format for every exporter: importers accept exactly this header.
+            // The source pause is recorded in the export journal, not in the SQL.
+            if($start===0)$write(SnapshotStream::HEADER);
             while($s['table']<count($s['tables'])&&$s['bytes']-$start<4194304&&microtime(true)-$started<$budget){
                 $table=$s['tables'][$s['table']];
                 if($s['keys']===null){

@@ -1,5 +1,6 @@
 <?php
 namespace ZoerConnect;
+require_once __DIR__.'/DatabaseExporter.php';
 
 /** Read-only preflight inventory for Zoer (API A2). Reports facts and compatibility warnings; never changes the site.
  * Paths are returned to authenticated Push/Pull clients only, like the export `source.abspath`. */
@@ -44,10 +45,12 @@ final class Diagnostics {
         $primary=$names("SELECT TABLE_NAME FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA=DATABASE() AND CONSTRAINT_TYPE='PRIMARY KEY'");
         $foreign=$names('SELECT TABLE_NAME, REFERENCED_TABLE_NAME FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE()');
         $triggers=$names('SELECT EVENT_OBJECT_TABLE FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE()');
-        $tables=[];
+        $tables=[];$others=$prefix!==''?DatabaseExporter::otherInstallations(array_column($status,'Name'),$prefix,$lower!==0):[];
         foreach(array_slice($status,0,2000) as $row){
             $name=(string)($row['Name']??'');$prefixed=$prefix!==''&&($lower!==0?strncasecmp($name,$prefix,strlen($prefix))===0:str_starts_with($name,$prefix));
-            $tables[]=['name'=>$name,'suffix'=>$prefixed?substr($name,strlen($prefix)):null,'prefixed'=>$prefixed,'engine'=>isset($row['Engine'])?(string)$row['Engine']:((string)($row['Comment']??'')==='VIEW'?'VIEW':''),'rows'=>(int)($row['Rows']??0),'bytes'=>(int)($row['Data_length']??0)+(int)($row['Index_length']??0),'primaryKey'=>isset($primary[$name]),'foreignKeys'=>isset($foreign[$name]),'triggers'=>isset($triggers[$name])];
+            // A longer prefix of another installation (wp_shop_ beside wp_) owns its tables.
+            $owner=$prefixed?DatabaseExporter::claimedBy($name,$others,$lower!==0):null;if($owner!==null)$prefixed=false;
+            $tables[]=['name'=>$name,'suffix'=>$prefixed?substr($name,strlen($prefix)):null,'prefixed'=>$prefixed,'engine'=>isset($row['Engine'])?(string)$row['Engine']:((string)($row['Comment']??'')==='VIEW'?'VIEW':''),'rows'=>(int)($row['Rows']??0),'bytes'=>(int)($row['Data_length']??0)+(int)($row['Index_length']??0),'primaryKey'=>isset($primary[$name]),'foreignKeys'=>isset($foreign[$name]),'triggers'=>isset($triggers[$name]),'otherInstallation'=>$owner];
         }
         return ['server'=>stripos($version,'mariadb')!==false?'mariadb':'mysql','version'=>preg_match('/^[0-9]+(?:\.[0-9]+)*/',$version,$m)?$m[0]:'','charset'=>(string)($db->charset??''),'collate'=>(string)($db->collate??''),'lowerCaseTableNames'=>$lower,'tables'=>$tables];
     }
@@ -70,6 +73,8 @@ final class Diagnostics {
             $names=array_column(array_filter($prefixed,$test),'name');
             if($names)$add($code,$text.': '.implode(', ',array_slice($names,0,10)).(count($names)>10?' and '.(count($names)-10).' more':'').'. Exclude them from the table selection.');
         }
+        $owners=array_values(array_unique(array_filter(array_column($r['database']['tables'],'otherInstallation'))));
+        if($owners)$add('other_installations','Other WordPress installations share this database ('.implode(', ',array_map(static fn($p)=>$p.'*',array_slice($owners,0,5))).'). Their tables are never exported or replaced from this site.');
         if(!$r['wordpress']['blogPublic'])$add('blog_private','Search engines are discouraged on this site (blog_public=0). Imports keep the destination setting.');
         foreach(['home','siteurl'] as $key)if(!str_starts_with(strtolower($r['wordpress'][$key]),'https://')){$add('no_https','The WordPress '.$key.' URL does not use HTTPS.');break;}
         return $warnings;

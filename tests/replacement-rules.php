@@ -65,3 +65,19 @@ expect(Replacement::apply('/var/www/x "/var/www" /var/www-old/y /var/wwwroot \/v
 // caseSensitive:false regex rows are validated as they will run (leading whitespace before the delimiter is legal PCRE).
 $custom=Replacement::custom([['find'=>' /foo/','replace'=>'bar','regex'=>true,'caseSensitive'=>false]]);
 expect(Replacement::apply('FOO',Replacement::rules([],'https://new.example',['automatic'=>false,'custom'=>$custom]))==='bar','case-insensitive regex row validated and applied in its transformed form');
+
+// JSON objects and arrays: each decoded string is replaced and re-encoded in its own escaping
+// style; everything else (whitespace, numbers, untouched strings) is kept exactly.
+expect(Replacement::apply('{"label":"cat"}',[['mode'=>'literal','find'=>'cat','replace'=>'a"b\\c']],$n)==='{"label":"a\\"b\\\\c"}'&&$n===1,'replacement with quotes and backslashes keeps JSON valid');
+$auto=Replacement::rules(['https://old.example'],'https://new.example',['automatic'=>true]);
+$doc="{\n  \"u\": \"https:\\/\\/old.example\\/x\", \"n\": 1.50, \"e\": \"\\u00e9\", \"raw\": \"https://old.example/y\"\n}";
+expect(Replacement::apply($doc,$auto,$n)==="{\n  \"u\": \"https:\\/\\/new.example\\/x\", \"n\": 1.50, \"e\": \"\\u00e9\", \"raw\": \"https://new.example/y\"\n}"&&$n===2,'escaped and plain URLs in JSON replaced without variants; formatting kept');
+expect(Replacement::apply('{"x":"a\\"b"}',[['mode'=>'literal','find'=>'a"b','replace'=>'c']],$n)==='{"x":"c"}'&&$n===1,'a find containing a quote matches the decoded JSON string');
+expect(Replacement::apply('[1,"no match",{"k":true}]',[['mode'=>'literal','find'=>'zzz','replace'=>'y']])==='[1,"no match",{"k":true}]','unrelated JSON untouched');
+expect(unserialize(Replacement::apply(serialize(['j'=>'{"u":"https://old.example"}']),$auto))['j']==='{"u":"https://new.example"}','JSON nested in serialized data');
+expect(Replacement::apply('[not json https://old.example',$auto)==='[not json https://new.example','text that only starts like JSON is text');
+// Text that merely starts like serialized data is replaced as text; malformed serialized data is still refused.
+expect(Replacement::apply('a:hover{background:url(https://old.example/a.png)}',$auto)==='a:hover{background:url(https://new.example/a.png)}','CSS beginning a:hover replaced as text');
+expect(Replacement::apply('i: see https://old.example',$auto)==='i: see https://new.example','text beginning i: replaced as text');
+reject(fn()=>Replacement::apply('a:1:{https://old.example}',$auto),'malformed serialized array still refused');
+expect(Replacement::binaryColumns("CREATE TABLE `t` (\n  `id` bigint NOT NULL,\n  `hash` binary(16) DEFAULT NULL,\n  `img` longblob,\n  `flags` bit(8),\n  `geo` point NOT NULL,\n  `blobby` text,\n  `title` varchar(10) COLLATE utf8mb4_bin\n)")===['hash','img','flags','geo'],'binary, BLOB, BIT and spatial columns identified; text with a _bin collation is not');

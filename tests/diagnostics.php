@@ -65,8 +65,8 @@ try{
  check(array_keys($r['php'])===['version','sapi','openBasedirRestricted','displayErrors','displayStartupErrors','functions','memoryLimit','maxExecutionTime','postMaxSize','uploadMaxFilesize','extensions']&&array_keys($r['php']['extensions'])===['zip','openssl','curl','mysqli']&&is_int($r['php']['maxExecutionTime']),'php facts');
  $db=$r['database'];check($db['server']==='mariadb'&&$db['version']==='11.4.3'&&$db['lowerCaseTableNames']===0&&$db['charset']==='utf8mb4','database server facts');
  $tables=array_column($db['tables'],null,'name');
- check(array_keys($db['tables'][0])===['name','suffix','prefixed','engine','rows','bytes','primaryKey','foreignKeys','triggers'],'table entry shape');
- check($tables['wp_posts']===['name'=>'wp_posts','suffix'=>'posts','prefixed'=>true,'engine'=>'InnoDB','rows'=>12,'bytes'=>24576,'primaryKey'=>true,'foreignKeys'=>true,'triggers'=>false],'referenced table reports foreign keys');
+ check(array_keys($db['tables'][0])===['name','suffix','prefixed','engine','rows','bytes','primaryKey','foreignKeys','triggers','otherInstallation'],'table entry shape');
+ check($tables['wp_posts']===['name'=>'wp_posts','suffix'=>'posts','prefixed'=>true,'engine'=>'InnoDB','rows'=>12,'bytes'=>24576,'primaryKey'=>true,'foreignKeys'=>true,'triggers'=>false,'otherInstallation'=>null],'referenced table reports foreign keys');
  check($tables['other_x']['suffix']===null&&!$tables['other_x']['prefixed']&&$tables['wp_view']['engine']==='VIEW'&&!$tables['wp_legacy']['primaryKey']&&$tables['wp_audit']['triggers'],'unprefixed, view, missing key and trigger facts');
  check($r['postTypes']===[['name'=>'post','label'=>'Posts','count'=>9],['name'=>'custom_thing','label'=>'custom_thing','count'=>3]],'post types with labels and counts');
  check($r['themes']===[['slug'=>'child','name'=>'Child','version'=>'1.0','active'=>true,'parent'=>'parent'],['slug'=>'parent','name'=>'Parent','version'=>'2.0','active'=>true,'parent'=>null],['slug'=>'spare','name'=>'Spare','version'=>'3.0','active'=>false,'parent'=>null]],'themes with active child and parent');
@@ -84,5 +84,7 @@ try{
  $errors=$clean;$errors['php']['displayStartupErrors']=true;check(array_column(Diagnostics::warnings($errors),'code')===['php_display_errors'],'startup error display warning');
  check(array_column(Diagnostics::warnings($clean,'/srv/wordfence-waf.php'),'code')===['firewall_plugin'],'auto_prepend firewall detected');
  $options['active_plugins']=[];$clean['plugins']=[['slug'=>'breeze','active'=>false]];check(Diagnostics::warnings($clean)===[],'inactive cache plugin ignored');
+ $shared=$clean;$shared['database']['tables'][]=['name'=>'wp_shop_options','suffix'=>null,'prefixed'=>false,'engine'=>'InnoDB','rows'=>1,'bytes'=>1,'primaryKey'=>true,'foreignKeys'=>false,'triggers'=>false,'otherInstallation'=>'wp_shop_'];
+ $w=Diagnostics::warnings($shared);check(array_column($w,'code')===['other_installations']&&str_contains($w[0]['message'],'wp_shop_*'),'another installation sharing the database is reported');
  $clean['database']['lowerCaseTableNames']=1;$clean['wordpress']['prefix']='WP_';check(array_column(Diagnostics::warnings($clean),'code')===['mixed_case_tables'],'mixed-case prefix with lower_case_table_names warned');
 }finally{$it=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST);foreach($it as $f){if($f->isDir()&&!$f->isLink())rmdir($f->getPathname());else unlink($f->getPathname());}rmdir($base);}

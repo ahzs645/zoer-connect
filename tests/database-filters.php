@@ -71,4 +71,12 @@ try{
  check($rows['wp_options']===['1','2','3','4','5','6','7','8','11'],'transients included on request; connector and wpmdb exclusions remain');
  [$tables,$rows]=$run(['tables'=>['postmeta'],'postTypes'=>['page']]);
  check($tables===['postmeta']&&$rows['wp_postmeta']===['11','14'],'dependent table filtered by parent posts even when posts are not exported');
+ // Another installation sharing the database (wp_shop_ beside wp_) is never exported from this site.
+ check(DatabaseExporter::otherInstallations(['wp_options','wp_posts','wp_shop_options','wp_shop_posts','wp_shop_orders','wp_extra_options','wpx_options','wpx_posts'],'wp_',false)===['wp_shop_'],'other installation needs options and posts tables under a longer prefix');
+ check(DatabaseExporter::otherInstallations(['WP_options','wp_shop_OPTIONS','WP_SHOP_posts'],'wp_',true)===['wp_shop_']&&DatabaseExporter::claimedBy('WP_SHOP_orders',['wp_shop_'],true)==='wp_shop_','case-folded names detected');
+ $db=new FilterDb();foreach(['wp_shop_options','wp_shop_posts'] as $t){$db->pdo->exec("CREATE TABLE $t (id INTEGER PRIMARY KEY)");$db->pdo->exec("INSERT INTO $t VALUES (1)");$db->engines[$t]='InnoDB';}
+ [$tables,,$sql]=$run([],$db);
+ check(!in_array('shop_options',$tables,true)&&!in_array('shop_posts',$tables,true)&&!str_contains($sql,'wp_shop_'),'default export leaves out another installation\'s tables');
+ $db=new FilterDb();unset($db->engines['wp_legacy']);foreach(['wp_shop_options','wp_shop_posts'] as $t)$db->engines[$t]='InnoDB';
+ denied(fn()=>DatabaseExporter::write($db,$root.'/shop.sql',null,40,['tables'=>['posts','shop_posts']]),'explicitly selected table of another installation refused','The table shop_posts belongs to another WordPress installation in this database.');
 }finally{foreach(glob($root.'/*') as $file)unlink($file);rmdir($root);}

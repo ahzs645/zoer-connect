@@ -31,5 +31,10 @@ try {
  check(SnapshotStream::schema($integerWidth10,'WP_terms',true)===SnapshotStream::schema($integerWidth10,'wp_terms'),'Case-folded database DDL resolves to the same table.');
  rejects(fn()=>SnapshotStream::schema($integerWidth10,'WP_terms'));
  rejects(fn()=>SnapshotStream::schema($integerWidth10,'WP_posts',true));
+ // 0.8.0 and earlier source-maintenance exports wrote a different first line; it stays importable.
+ $legacy=SnapshotStream::LEGACY_MAINTENANCE_HEADER.substr($valid,strlen(SnapshotStream::HEADER));file_put_contents($path,$legacy);
+ $r=SnapshotStream::read($path,$schema,SnapshotStream::initial());check($r['cursor']['done']&&$r['records'][1]['row']['ID']==='1','Legacy maintenance header rejected.');
+ file_put_contents($path,str_replace('source-maintenance','other',$legacy));rejects(fn()=>SnapshotStream::read($path,$schema,SnapshotStream::initial()));
+ echo "PASS legacy source-maintenance header accepted; other headers rejected\n";
  echo "PASS streaming >8 MiB / 25,001 rows; durable cursor retry; integer display widths; schema, statement, footer and duplicate-column rejection\n";
 }finally{unlink($path);}

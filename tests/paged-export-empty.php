@@ -22,6 +22,10 @@ try {
  $files=$store->manifest($id,0)['files'];$empty=array_search('wp-content/themes/test/empty.txt',array_column($files,'path'),true);
  check($empty!==false&&$files[$empty]['bytes']===0&&$files[$empty]['sha256']===hash('sha256','')&&$files[$empty]['digestFormat']===ZoerConnect\ExportBlocks::FORMAT,'empty snapshot carries a verified zero-block root');
  $batch=$store->batch($id,0,0);check(count($batch['chunks'])===2,'batch advances beyond the empty file');
+ // A site without wp-content/languages still completes a paged export that asks for translations.
+ $lang=str_repeat('f',32);$store->create(['clientId'=>$lang,'profile'=>['name'=>'lang','themes'=>true,'languages'=>true],'database'=>false,'largeTransfer'=>true],[]);
+ for($n=0,$k=['status'=>'preparing'];$n<10&&$k['status']!=='ready';$n++)$k=$store->step($lang,fn()=>null);
+ check($k['status']==='ready'&&$k['fileCount']===2,'paged export with translations requested completes without a languages folder');$store->cancel($lang);
  foreach($batch['chunks'] as $c)check(hash('sha256',base64_decode($c['data']))===$c['sha256'],'download chunk checksum');
  check($store->batch($id,0,0)===$batch,'empty-file download retries identically');
  $store->cancel($id);

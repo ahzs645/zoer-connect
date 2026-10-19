@@ -7,6 +7,8 @@ namespace ZoerConnect;
  */
 final class SnapshotStream {
     public const HEADER = "-- Zoer Connect database snapshot\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\nSET SQL_MODE='NO_AUTO_VALUE_ON_ZERO';\n";
+    /** Written by 0.8.0 and earlier source-maintenance exports; otherwise identical. */
+    public const LEGACY_MAINTENANCE_HEADER = "-- Zoer Connect source-maintenance snapshot\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\nSET SQL_MODE='NO_AUTO_VALUE_ON_ZERO';\n";
     public const MAX_RECORD_BYTES = 16777216;
     public static function initial(): array { return ['offset'=>0,'current'=>null,'seen'=>[],'done'=>false]; }
     public static function schema(string $sql, string $table, bool $folded=false): string {
@@ -18,6 +20,11 @@ final class SnapshotStream {
         $body=preg_replace('/ AUTO_INCREMENT=[0-9]+(?= |$)/','',substr($sql,strlen($prefix)));
         // MySQL/MariaDB integer display widths do not change stored values.
         return preg_replace('/\b(bigint|mediumint|smallint|tinyint|int)\([0-9]+\)/i','$1',$body);
+    }
+    /** Consumes either accepted header from the start of the file. */
+    private static function header($h): bool {
+        if (fread($h,strlen(self::HEADER))===self::HEADER) return true;
+        return fseek($h,0)===0&&fread($h,strlen(self::LEGACY_MAINTENANCE_HEADER))===self::LEGACY_MAINTENANCE_HEADER;
     }
     private static function line($h): string {
         $line=fgets($h,self::MAX_RECORD_BYTES+2);
@@ -36,7 +43,7 @@ final class SnapshotStream {
         $records=[]; $bytes=0;
         try {
             if (fseek($h,$cursor['offset'])!==0) throw new \RuntimeException('Cannot resume snapshot.');
-            if ($cursor['offset']===0 && fread($h,strlen(self::HEADER))!==self::HEADER) throw new \InvalidArgumentException('Unsupported snapshot header.');
+            if ($cursor['offset']===0 && !self::header($h)) throw new \InvalidArgumentException('Unsupported snapshot header.');
             for ($i=0;$i<$budget;$i++) {
                 $line=self::line($h); $bytes+=strlen($line);
                 if ($line==="SET FOREIGN_KEY_CHECKS=1;\n") {

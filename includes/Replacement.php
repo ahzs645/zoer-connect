@@ -22,7 +22,8 @@ final class Replacement {
         return self::walk($value,$rules,0,$count);
     }
     private static function matches(string $value,array $r): bool {
-        if($r['mode']==='literal')return ($r['caseSensitive']??true)?str_contains($value,$r['find']):stripos($value,$r['find'])!==false;
+        // Escaped JSON text (a\"b, \u00e9) can hide a match that its decoded strings contain.
+        if($r['mode']==='literal')return (($r['caseSensitive']??true)?str_contains($value,$r['find']):stripos($value,$r['find'])!==false)||(str_contains($value,'\\')&&self::jsonContainer($value));
         // Arrays without objects are walked for anchored patterns; object payloads
         // are only refused when the pattern can match their serialized bytes.
         if(self::regex(static fn()=>@preg_match($r['find'],$value))===1)return true;
@@ -37,12 +38,15 @@ final class Replacement {
         if($depth>30)throw new \RuntimeException('Nested value limit exceeded.');
         if(is_array($value)){ $out=[];foreach($value as $key=>$item)$out[$key]=self::walk($item,$rules,$depth+1,$count);return $out; }
         if(!is_string($value))return $value;
-        if(preg_match('/^(?:a|s|i|b|d|O|C|R|r):|^N;$/',$value)){
+        // Only a serialized token shape counts; text such as CSS `a:hover {` or `i: note` is text.
+        if(preg_match('/^(?:a:[0-9]+:\{|s:[0-9]+:"|i:-?[0-9]+;|b:[01];|d:[-+0-9.EINFA]+;|[OC]:[0-9]+:"|[Rr]:[0-9]+;|N;$)/',$value)){
             if(preg_match('/(?:^|[;{}])(?:O|C|R|r):/',$value))throw new \RuntimeException('Serialized objects and references are unsupported.');
             $decoded=@unserialize($value,['allowed_classes'=>false,'max_depth'=>32]);
             if($decoded===false&&$value!=='b:0;')throw new \RuntimeException('Malformed serialized value.');
             return serialize(self::walk($decoded,$rules,$depth+1,$count));
         }
+        $json=self::json($value,$rules,$depth,$count);
+        if($json!==null)return $json;
         for($i=0,$n=count($rules);$i<$n;$i++){
             $r=$rules[$i];$c=0;
             if($r['atomic']??false){
@@ -63,6 +67,34 @@ final class Replacement {
             if(strlen($value)>self::MAX_VALUE)throw new \RuntimeException('Replacement output too large.');
         }
         return $value;
+    }
+    private static function jsonContainer(string $value): bool {
+        if(!preg_match('/^\s*[\[{]/',$value))return false;
+        if(function_exists('json_validate'))return json_validate($value);
+        json_decode($value);return json_last_error()===JSON_ERROR_NONE;
+    }
+    /** A JSON object or array: rules apply to each decoded string (keys and values), which
+     * is re-encoded in its original escaping style, so a replacement containing quotes or
+     * backslashes stays valid JSON. Bytes outside changed strings are kept exactly.
+     * Returns null when the value is not a JSON object or array. */
+    private static function json(string $value,array $rules,int $depth,int &$count): ?string {
+        if(!self::jsonContainer($value))return null;
+        // Valid JSON has no quote outside its string tokens, so this matches exactly those.
+        $out=preg_replace_callback('/"(?:[^"\\\\]++|\\\\.)*+"/s',static function($m)use($rules,$depth,&$count){
+            $text=json_decode($m[0]);if(!is_string($text))throw new \RuntimeException('Malformed JSON value.');
+            $next=self::walk($text,$rules,$depth+1,$count);if($next===$text)return $m[0];
+            $flags=(str_contains($m[0],'\\u')?0:JSON_UNESCAPED_UNICODE)|(str_contains($m[0],'\\/')?0:JSON_UNESCAPED_SLASHES);
+            $encoded=json_encode($next,$flags);if(!is_string($encoded))throw new \RuntimeException('A replacement produced text that cannot be stored in JSON.');
+            return $encoded;
+        },$value);
+        if(!is_string($out))throw new \RuntimeException('JSON replacement failed or exceeded limits.');
+        return $out;
+    }
+    /** Columns whose bytes are never text: binary strings, BLOBs, BIT and spatial values.
+     * Replacement skips them, so matching bytes inside an image or hash stay unchanged. */
+    public static function binaryColumns(string $createTable): array {
+        preg_match_all('/^\s*`([A-Za-z0-9_]+)`\s+(?:binary|varbinary|tinyblob|blob|mediumblob|longblob|bit|geometry|geometrycollection|geomcollection|point|multipoint|linestring|multilinestring|polygon|multipolygon)\b/mi',$createTable,$m);
+        return array_values(array_unique($m[1]));
     }
     /** Pattern actually run for a custom regex row: caseSensitive=false appends the
      * i modifier after the closing delimiter (PHP ignores spaces among modifiers). */

@@ -56,4 +56,14 @@ try{
  unlink($base.'/private/import-'.str_repeat('d',32).'/state.json');rmdir($base.'/private/import-'.str_repeat('d',32));
  $_POST=['_wpnonce'=>'fixture:zoer_import_cleanup','import_id'=>$done];
  check(outcome([TransferAdmin::class,'cleanup'])==='redirect:/tools.php?page=zoer-connect&zoer_cleanup=1'&&json_decode(file_get_contents($path),true)['cleanedUp']===true&&json_decode(file_get_contents($path),true)['owner']===str_repeat('f',64),'administrator cleans up a journal from an earlier key generation');
+ // After a key reset the administrator hands the unfinished import (earlier key 'f…') to the current key ('a…').
+ $path=$base.'/private/import-'.$active.'/state.json';file_put_contents($path,json_encode(json_decode(file_get_contents($path),true)+['tables'=>[],'artifacts'=>[],'cursor'=>0,'sourceUrl'=>'https://source.example']));
+ $page=html([TransferAdmin::class,'render']);
+ check(substr_count($page,'>Continue with the current key</button>')===1&&str_contains($page,'name="action" value="zoer_import_adopt"><input type="hidden" name="import_id" value="'.$active.'"'),'an unfinished import of an earlier key offers recovery with the current key');
+ $_POST=['_wpnonce'=>'bad','import_id'=>$active];check(outcome([TransferAdmin::class,'adopt'])==='error:Invalid nonce.','adopt requires nonce');
+ $GLOBALS['fixtureSsl']=false;$_POST=['_wpnonce'=>'fixture:zoer_import_adopt','import_id'=>$active];check(str_starts_with(outcome([TransferAdmin::class,'adopt']),'error:HTTPS'),'adopt requires HTTPS');$GLOBALS['fixtureSsl']=true;
+ $_POST=['_wpnonce'=>'fixture:zoer_import_adopt','import_id'=>$done];check(outcome([TransferAdmin::class,'adopt'])==='error:Only an unfinished import can continue with the current key.','finished imports are not adopted');
+ $_POST=['_wpnonce'=>'fixture:zoer_import_adopt','import_id'=>$active];
+ check(outcome([TransferAdmin::class,'adopt'])==='redirect:/tools.php?page=zoer-connect&zoer_adopted=1'&&json_decode(file_get_contents($path),true)['owner']===str_repeat('a',64)&&json_decode(file_get_contents($path),true)['phase']==='reading_database','administrator moves the unfinished import to the current key without changing its phase');
+ check(!str_contains(html([TransferAdmin::class,'render']),'>Continue with the current key</button>'),'no recovery offered once the import uses the current key');
 }finally{$it=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST);foreach($it as $f){if($f->isDir()&&!$f->isLink())rmdir($f->getPathname());else unlink($f->getPathname());}rmdir($base);}

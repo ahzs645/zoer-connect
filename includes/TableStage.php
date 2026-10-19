@@ -13,6 +13,11 @@ require_once __DIR__.'/ImportError.php';
  * or creates a table missing from the destination (ledger marker -4 'created').
  */
 final class TableStage {
+    /** One row, as the exporters allow it: a 16 MiB SQL statement (SnapshotStream::MAX_RECORD_BYTES)
+     * and a 16 MiB replacement output (Replacement::MAX_VALUE). */
+    public const MAX_ROW_BYTES = 16777216;
+    /** A staged batch: the rows plus serialization overhead. */
+    public const MAX_BATCH_BYTES = 17825792;
     private $db;
     private string $live;
     private string $stage;
@@ -112,8 +117,8 @@ final class TableStage {
         }
         $order='`'.implode('`,`',$columns).'`';
         // Bound bytes as well as rows before transferring payloads into PHP.
-        // Total table size is unlimited; an individual imported row is already
-        // constrained by the 4 MiB staging-batch limit.
+        // Total table size is unlimited; a page holds about 4 MiB, or one larger row
+        // up to the 16 MiB row limit that imports also apply.
         $fields=$this->db->get_col("SHOW COLUMNS FROM `$table`");
         if(!$fields)throw new \RuntimeException('Content columns are unavailable.');
         $sizes=[];
@@ -125,7 +130,7 @@ final class TableStage {
         if($this->db->last_error || !is_array($lengths))throw new \RuntimeException('Content size verification failed.');
         $pageLimit=0;$pageBytes=0;
         foreach($lengths as $length){
-            if((int)$length>4194304)throw new \RuntimeException('A destination row exceeds the 4 MiB verification limit.');
+            if((int)$length>self::MAX_ROW_BYTES)throw new \RuntimeException('A destination row exceeds the 16 MiB verification limit.');
             if($pageBytes+(int)$length>4194304)break;
             $pageBytes+=(int)$length;$pageLimit++;
         }
@@ -195,8 +200,9 @@ final class TableStage {
         });
     }
     public function chunk(int $sequence, array $rows): void {
-        if($sequence<0||count($rows)>250||!array_is_list($rows)||!$rows||strlen(serialize($rows))>4194304)throw new \InvalidArgumentException('Invalid row batch.');
-        $this->locked(function()use($sequence,$rows){
+        if($sequence<0||count($rows)>250||!array_is_list($rows)||!$rows)throw new \InvalidArgumentException('Invalid row batch.');
+        $size=strlen(serialize($rows));if($size>self::MAX_BATCH_BYTES)throw new \InvalidArgumentException('A database row exceeds the 16 MiB import limit.');
+        $this->locked(function()use($sequence,$rows,$size){
             $phase=$this->db->get_var("SELECT phase FROM `{$this->ledger}` WHERE sequence_id=-1");
             if($phase!=='uploading')throw new \RuntimeException('Stage is not writable.');
             $columns=$this->db->get_col("SHOW COLUMNS FROM `{$this->stage}`");
@@ -205,6 +211,11 @@ final class TableStage {
                 foreach($row as $value)if(!is_null($value)&&!is_string($value)&&!is_int($value)&&!is_float($value))throw new \InvalidArgumentException('Unsupported cell value.');
             }
             $digest=hash('sha256',serialize($rows));
+            // A large row must fit one INSERT; escaping can double binary bytes. Say so instead of a generic failure.
+            if($size>1048576){
+                $packet=(int)$this->db->get_var('SELECT @@SESSION.max_allowed_packet');
+                if($packet>0&&$size*2+65536>$packet)throw new \RuntimeException('A '.ceil($size/1048576).' MiB database row needs a larger MySQL max_allowed_packet on this site (currently '.floor($packet/1048576).' MiB; '.(ceil($size*2/1048576)+1).' MiB is enough).');
+            }
             $old=$this->db->get_var($this->db->prepare("SELECT digest FROM `{$this->ledger}` WHERE sequence_id=%d",$sequence));
             if($old!==null){if(!hash_equals($old,$digest))throw new \InvalidArgumentException('Conflicting retry.');return;}
             $next=(int)$this->db->get_var("SELECT COALESCE(MAX(sequence_id),-1)+1 FROM `{$this->ledger}`");

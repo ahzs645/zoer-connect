@@ -53,6 +53,25 @@ final class DatabaseExporter {
         if($table===$prefix.'commentmeta'&&$droppedComment&&isset($present[$prefix.'comments']))$where[]="comment_id NOT IN (SELECT comment_ID FROM `{$prefix}comments` WHERE ".implode(' OR ',$droppedComment).')';
         return $where?' WHERE '.implode(' AND ',$where):'';
     }
+    /** Longer table prefixes of other WordPress installations sharing this database: a
+     * prefix that extends $prefix and has both an options and a posts table (wp_shop_ beside
+     * wp_). A name starting with one belongs to that installation, never to this one. */
+    public static function otherInstallations(array $names,string $prefix,bool $folded): array {
+        $set=[];foreach($names as $name)if(is_string($name))$set[$folded?strtolower($name):$name]=true;
+        $out=[];
+        foreach($names as $name){
+            if(!is_string($name)||strlen($name)<=strlen($prefix)+7||!str_ends_with($folded?strtolower($name):$name,'options'))continue;
+            if(!($folded?strncasecmp($name,$prefix,strlen($prefix))===0:str_starts_with($name,$prefix)))continue;
+            $other=$prefix.substr($name,strlen($prefix),-7);
+            if(isset($set[$folded?strtolower($other.'posts'):$other.'posts']))$out[]=$other;
+        }
+        $out=array_values(array_unique($out));usort($out,static fn($a,$b)=>strlen($b)<=>strlen($a));return $out;
+    }
+    /** The other installation's prefix that $name belongs to, or null. */
+    public static function claimedBy(string $name,array $others,bool $folded=false): ?string {
+        foreach($others as $other)if($folded?strncasecmp($name,$other,strlen($other))===0:str_starts_with($name,$other))return $other;
+        return null;
+    }
     public static function ddl(string $sql): string {return (string)preg_replace('/ AUTO_INCREMENT=[0-9]+(?= |$)/','',$sql);}
     /** Returns the exported table suffixes (names after the prefix). Empty $filters
      * means `database:true`: the 0.3.14 export; a filter object is never empty once normalized. */
@@ -72,11 +91,13 @@ final class DatabaseExporter {
         $folded=method_exists($db,'get_var')&&(int)$db->get_var('SELECT @@lower_case_table_names')!==0;
         $tables=$db->get_results('SHOW TABLE STATUS',ARRAY_A);
         if($db->last_error||!is_array($tables))throw new \RuntimeException('Cannot inspect database.');
-        $selected=[];$present=[];
+        $selected=[];$present=[];$others=self::otherInstallations(array_column($tables,'Name'),$prefix,$folded);
         foreach($tables as $table){
             $name=$table['Name'];
             if($folded&&strncasecmp($name,$prefix,strlen($prefix))===0)$name=$prefix.substr($name,strlen($prefix));
             if(!str_starts_with($name,$prefix))continue;
+            // Another installation's tables (and its users) are never exported from this site.
+            if(self::claimedBy($name,$others,$folded)!==null){if($filters['tables']!==null&&in_array(substr($name,strlen($prefix)),$filters['tables'],true))throw new \InvalidArgumentException('The table '.substr($name,strlen($prefix)).' belongs to another WordPress installation in this database.');continue;}
             $present[$name]=true;
             // A table subset may leave out an unsupported table; unselected tables are never read.
             if($filters['tables']!==null&&!in_array(substr($name,strlen($prefix)),$filters['tables'],true))continue;

@@ -14,6 +14,7 @@ final class ExportAdmin {
         $lines=static fn($key)=>array_values(array_filter(array_map('trim',preg_split('/\r?\n/',(string)wp_unslash($post[$key]??''))),static fn($v)=>$v!==''));
         $profile=['name'=>sanitize_text_field(wp_unslash($post['name']??'')),'excludes'=>$lines('excludes')];
         foreach(['themes','plugins','media','muplugins','core'] as $key)$profile[$key]=isset($post[$key]);
+        if(isset($post['languages']))$profile['languages']=true;
         foreach(['themes','plugins'] as $key){$profile[$key.'Mode']=sanitize_key($post[$key.'Mode']??'all');$profile[$key.'Items']=$lines($key.'Items');}
         $since=trim((string)wp_unslash($post['mediaSince']??''));if($since!=='')$profile['mediaSince']=$since;
         return ExportProfile::normalize($profile);
@@ -53,7 +54,7 @@ final class ExportAdmin {
         if($id!==null)echo '<input type="hidden" name="profile_id" value="'.esc_attr($id).'">';
         echo '<label>Profile name <input name="name" required maxlength="80" class="regular-text" value="'.esc_attr($p['name']??'').'"></label><fieldset><legend>Include</legend>';
         $modes=['all'=>'All','active'=>'Active only','selected'=>'Only listed','except'=>'All except listed'];
-        foreach(['themes'=>'Themes','plugins'=>'Plugins','media'=>'Media uploads','muplugins'=>'Must-use plugins','core'=>'WordPress core'] as $key=>$label){
+        foreach(['themes'=>'Themes','plugins'=>'Plugins','media'=>'Media uploads','muplugins'=>'Must-use plugins','languages'=>'Translations','core'=>'WordPress core'] as $key=>$label){
             echo '<label><input type="checkbox" name="'.esc_attr($key).'" '.checked(($p[$key]??false)===true,true,false).'> '.esc_html($label).'</label>';
             if(in_array($key,['themes','plugins'],true)){
                 echo '<span class="zc-sub"><label>'.esc_html($label).' selection <select name="'.esc_attr($key).'Mode">';

@@ -33,6 +33,7 @@ final class FileExporter {
             if($mode==='except')$items=array_values(array_intersect($items,array_column($inventory,'id')));
             foreach(Selection::resources($inventory,$mode,$items) as $item)$roots[]=$path.'/'.$item['id'];
         }
+        if($profile['languages']??false)$roots[]='wp-content/languages';
         if($profile['core']){$roots[]='wp-admin';$roots[]='wp-includes';}
         return $roots;
     }

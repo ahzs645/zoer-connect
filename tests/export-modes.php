@@ -28,6 +28,12 @@ try{
  denied(fn()=>$paths(['plugins'=>true,'pluginsMode'=>'selected','pluginsItems'=>['missing']]),'selected plugin absent from source refused');
  check($paths(['media'=>true,'mediaSince'=>'2025-12-31'])===['wp-content/uploads/2026/new.jpg'],'media modified on or after date');
  check($paths(['media'=>true,'mediaSince'=>'2026-01-01'])===['wp-content/uploads/2026/new.jpg'],'media date boundary is inclusive');
+ // Translations (0.9.0): wp-content/languages only when asked; false and absent bind identically.
+ check(P::normalize(['name'=>'site','themes'=>true,'media'=>true,'languages'=>false])===$legacy&&P::normalize(['name'=>'x','languages'=>true])['languages']===true,'languages switch is absent unless true');
+ denied(fn()=>P::normalize(['name'=>'x','languages'=>'yes']),'non-boolean languages switch rejected');
+ check($paths(['languages'=>true])===[],'a site without wp-content/languages exports no translations');
+ mkdir($root.'/wp-content/languages/plugins',0755,true);file_put_contents($root.'/wp-content/languages/fr_FR.mo','mo');file_put_contents($root.'/wp-content/languages/plugins/alpha-fr_FR.mo','mo');
+ check($paths(['languages'=>true])===['wp-content/languages/fr_FR.mo','wp-content/languages/plugins/alpha-fr_FR.mo']&&!in_array('wp-content/languages/fr_FR.mo',$paths(['themes'=>true,'plugins'=>true,'media'=>true]),true),'translations exported only with the languages switch');
  check(count($paths(['media'=>true]))===2,'media without date exports every upload');
  $profile=['name'=>'zip','themes'=>true,'themesMode'=>'active'];$active=['themes'=>['other']];$plan=FileExporter::plan($root,$profile,$active);
  FileExporter::zip($root,$plan,$base.'/active.zip',$active);$z=new ZipArchive();$z->open($base.'/active.zip');check($z->locateName('wordpress/wp-content/themes/other/style.css')!==false&&$z->numFiles===2,'download ZIP re-plans with the same active resources');$z->close();

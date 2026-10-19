@@ -5,7 +5,7 @@ final class ExportProfile {
     // content, and Zoer cannot import these paths.
     public const DEFAULT_EXCLUDES=['**/.DS_Store','**/__MACOSX/','**/._*','**/.editorconfig','**/.gitattributes','**/.gitignore','**/.gitkeep','**/.npmignore'];
     public static function normalize(array $input): array {
-        if(array_diff(array_keys($input),['name','themes','plugins','media','muplugins','core','excludes','themesMode','themesItems','pluginsMode','pluginsItems','mediaSince']))throw new \InvalidArgumentException('Unknown profile field.');
+        if(array_diff(array_keys($input),['name','themes','plugins','media','muplugins','core','excludes','themesMode','themesItems','pluginsMode','pluginsItems','mediaSince','languages']))throw new \InvalidArgumentException('Unknown profile field.');
         $name=$input['name']??'';
         if(!is_string($name)||trim($name)===''||strlen($name)>80)throw new \InvalidArgumentException('Profile name required (80 characters maximum).');
         $out=['name'=>trim($name)];
@@ -26,6 +26,9 @@ final class ExportProfile {
             $items=in_array($mode,['selected','except'],true)?array_values(array_unique($items)):[];sort($items);
             $out[$key.'Mode']=$mode;$out[$key.'Items']=$items;
         }
+        // wp-content/languages (translations). Absent unless true, so earlier request bindings stay identical.
+        if(isset($input['languages'])&&!is_bool($input['languages']))throw new \InvalidArgumentException('Invalid resource switch.');
+        if(($input['languages']??false)===true)$out['languages']=true;
         $since=$input['mediaSince']??null;
         if($since!==null){
             if(!is_string($since)||!preg_match('/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/D',$since,$m)||!checkdate((int)$m[2],(int)$m[3],(int)$m[1]))throw new \InvalidArgumentException('Media date must be YYYY-MM-DD.');

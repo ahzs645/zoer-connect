@@ -21,6 +21,15 @@ try{
  $html=render();check(!str_contains($html,'id="zoer-connection-info"'),'GET does not redisplay secret');
  render(['zoer_connection_action'=>'permissions','_wpnonce'=>$post['_wpnonce'],'allow_pull'=>'on']);render($post);$rotated=get_option(ConnectionKey::OPTION);
  check(!$rotated['push']&&$rotated['pull']&&$rotated['hash']!==$first['hash'],'reset preserves disabled Push and enabled Pull');
+ // An unfinished import created with the current key blocks an ordinary reset; revoking still works.
+ $journal=$private.'/import-'.str_repeat('a',32);mkdir($journal,0700);file_put_contents($journal.'/state.json',json_encode(['id'=>str_repeat('a',32),'phase'=>'reading_database','owner'=>$rotated['hash'],'target'=>'https://example.test']));
+ $html=render($post);check(get_option(ConnectionKey::OPTION)['hash']===$rotated['hash']&&str_contains($html,'The key was not reset')&&!str_contains($html,'id="zoer-connection-info"'),'reset refused while an import needs the current key');
+ file_put_contents($journal.'/state.json',json_encode(['id'=>str_repeat('a',32),'phase'=>'reading_database','owner'=>str_repeat('0',64),'target'=>'https://example.test']));
+ $html=render($post);$other=get_option(ConnectionKey::OPTION);check($other['hash']!==$rotated['hash']&&str_contains($html,'id="zoer-connection-info"'),'an import of an earlier key does not block a reset');
+ file_put_contents($journal.'/state.json',json_encode(['id'=>str_repeat('a',32),'phase'=>'reading_database','owner'=>$other['hash'],'target'=>'https://example.test']));$rotated=$other;
+ render(['zoer_connection_action'=>'revoke','_wpnonce'=>$post['_wpnonce']]);check(!isset(get_option(ConnectionKey::OPTION)['hash']),'revocation stays available while an import is unfinished');
+ render($post);$regenerated=get_option(ConnectionKey::OPTION);check(isset($regenerated['hash'])&&$regenerated['hash']!==$other['hash'],'after revocation a new key can be generated');
+ unlink($journal.'/state.json');rmdir($journal);
  render(['zoer_connection_action'=>'revoke','_wpnonce'=>$post['_wpnonce']]);render($post);$regenerated=get_option(ConnectionKey::OPTION);
  check(!$regenerated['push']&&!$regenerated['pull'],'key regeneration respects revoked permissions');
  // Start a fresh fixture to exercise the one-click happy path.
