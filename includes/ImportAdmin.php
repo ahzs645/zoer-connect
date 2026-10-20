@@ -1,6 +1,7 @@
 <?php
 namespace ZoerConnect;
 require_once __DIR__.'/RequestDrain.php';
+require_once __DIR__.'/CopiedFence.php';
 
 /** Default shared-hosting setup and advanced two-step destination setup. A private receipt cannot arrive in an
  * imported options table. Worker adoption is verified through local process identities. Writer isolation
@@ -87,6 +88,8 @@ final class ImportAdmin {
             if($action==='default'){
                 // Do not downgrade strict setup, renew stale receipts, or replace recovery state.
                 foreach([self::READY,self::PENDING] as $name)if(file_exists(rtrim($private,'/').'/'.$name)||is_link(rtrim($private,'/').'/'.$name))return self::ready($private,$root)?'Destination setup is ready.':'Existing destination setup needs attention below.';
+                // A site restored or copied from another Zoer Connect site brings that site's fence along; it is replaced.
+                CopiedFence::removeIfCopied($root,$private);
                 if(file_exists(rtrim($root,'/').'/'.self::MU)||is_link(rtrim($root,'/').'/'.self::MU))return 'Existing destination setup needs attention below.';
                 $administratorId=(int)get_current_user_id();if($administratorId<1)throw new \RuntimeException('An administrator identity is required.');
                 (new WriteFence($private,$root))->install(true);
@@ -96,6 +99,7 @@ final class ImportAdmin {
             }
             if($action==='shared'){
                 if(($_POST['replacement_accepted']??null)!=='1')throw new \InvalidArgumentException('Confirm replacement of the selected destination resources.');
+                CopiedFence::removeIfCopied($root,$private);
                 (new WriteFence($private,$root))->install(true);
                 $identity=self::identity($private,$root);
                 $administratorId=(int)get_current_user_id();if($administratorId<1)throw new \RuntimeException('An administrator identity is required.');
@@ -103,6 +107,7 @@ final class ImportAdmin {
                 return 'Shared-hosting replacement enabled. Selected resources will be replaced; concurrent edits are not merged.';
             }
             if($action==='install'){
+                CopiedFence::removeIfCopied($root,$private);
                 (new WriteFence($private,$root))->install();
                 $inventory=RequestDrain::workers();
                 $baseline=['boot'=>$inventory['boot'],'workers'=>$inventory['workers']];

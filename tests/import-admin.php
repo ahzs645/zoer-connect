@@ -73,4 +73,13 @@ try{
  $home='https://other.example';check(!ImportAdmin::ready($private,$root),'shared receipt binds destination');$home='https://destination.example';
  file_put_contents($private.'/write-fence.json','{}');denied(fn()=>ImportAdmin::submit($private,$root),'shared setup cannot overwrite active recovery');unlink($private.'/write-fence.json');
 
+ // A site restored from a backup of another Zoer Connect site arrives with that site's fence: setup replaces it.
+ $other=$base.'/original';mkdir($other.'/wp-content',0755,true);mkdir($base.'/original-private',0700);(new WriteFence($base.'/original-private',$other))->install(true);$copied=file_get_contents($other.'/wp-content/mu-plugins/000-zoer-connect-fence.php');
+ unlink($private.'/import-readiness.json');file_put_contents($mu,$copied);check(!ImportAdmin::ready($private,$root),'a fence copied from another site is not this site\'s readiness');
+ $_POST=$shared+['replacement_accepted'=>'1'];ImportAdmin::submit($private,$root);
+ check(ImportAdmin::mode($private,$root)==='shared-replacement'&&file_get_contents($mu)!==$copied&&(new WriteFence($private,$root))->installed(),'setup replaces a fence copied from another site');
+ unlink($private.'/import-readiness.json');@unlink($private.'/import-setup-pending.json');file_put_contents($mu,$copied);$_POST=$defaultPost;ImportAdmin::setupDefault($private,$root);
+ check(ImportAdmin::mode($private,$root)==='shared-replacement'&&file_get_contents($mu)!==$copied,'connection setup replaces a fence copied from another site');
+ unlink($private.'/import-readiness.json');file_put_contents($mu,"<?php // someone else's file\n");$_POST=$shared+['replacement_accepted'=>'1'];denied(fn()=>ImportAdmin::submit($private,$root),'setup still refuses a foreign MU file');
+ check(file_get_contents($mu)==="<?php // someone else's file\n",'the foreign MU file is left alone');
 }finally{$it=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST);foreach($it as $file){if($file->isDir())rmdir($file->getPathname());else unlink($file->getPathname());}rmdir($base);}

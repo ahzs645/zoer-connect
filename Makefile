@@ -24,6 +24,7 @@ test: lint
 	php tests/database-export.php
 	php tests/database-filters.php
 	php tests/diagnostics.php
+	php tests/copied-fence.php
 	php tests/related-replacement.php
 	php tests/replacement-rules.php
 	php tests/coordinator.php
