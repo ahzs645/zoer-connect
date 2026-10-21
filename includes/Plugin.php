@@ -2,7 +2,7 @@
 namespace ZoerConnect;
 
 final class Plugin {
-    public const VERSION = '0.9.0';
+    public const VERSION = '0.9.1';
     public const THEME_OVERRIDES_ROUTE = '/theme-overrides/(?P<theme>[a-z0-9][a-z0-9._-]{0,79})';
     private static bool $applicationPassword = false;
     public static function boot(): void {
@@ -219,7 +219,7 @@ final class Plugin {
             // 0.9.0: export profiles may include wp-content/languages (`languages: true`).
             $capabilities['languages']=true;
             foreach(['replacementRules','replacementVariants','reviewPause','createTables','authorMapping','keepActivePlugins','lateFence','importPauseResume','importCleanup','importList','siteReplace','cachePurge','databaseFilters','resourceModes','mediaSince','diagnostics','safeErrors'] as $capability)$capabilities[$capability]=true;
-            return ['version' => '0.9.0', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'transferLimits'=>['manifestMaxBytes'=>8388608,'maxFileBytes'=>TransferStorage::FILE_BYTES,'quotaBytes'=>TransferStorage::quota(),'reserveBytes'=>TransferStorage::RESERVE_BYTES,'maxFiles'=>StageStore::MAX_FILES,'maxRecordBytes'=>SnapshotStream::MAX_RECORD_BYTES,'maxRowBytes'=>TableStage::MAX_ROW_BYTES],'batchLimits'=>BatchUpload::limits()];
+            return ['version' => '0.9.1', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'transferLimits'=>['manifestMaxBytes'=>8388608,'maxFileBytes'=>TransferStorage::FILE_BYTES,'quotaBytes'=>TransferStorage::quota(),'reserveBytes'=>TransferStorage::RESERVE_BYTES,'maxFiles'=>StageStore::MAX_FILES,'maxRecordBytes'=>SnapshotStream::MAX_RECORD_BYTES,'maxRowBytes'=>TableStage::MAX_ROW_BYTES],'batchLimits'=>BatchUpload::limits()];
     }
     public static function routes(): void {
         $register = static function ($path, $method, $handler) {
@@ -311,7 +311,7 @@ final class Plugin {
     }
     public static function admin(): void {
         if (!current_user_can('manage_options')) return;
-        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.9.0 — WordPress transfers and recovery.</p>';
+        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.9.1 — WordPress transfers and recovery.</p>';
         require_once __DIR__.'/AdminPage.php';
         AdminPage::render();
         echo '</div>';

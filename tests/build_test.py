@@ -27,6 +27,7 @@ with ZipFile(archive) as z:
         'zoer-connect/includes/ChunkedFilePublication.php',
         'zoer-connect/includes/ConnectionAdmin.php',
         'zoer-connect/includes/ConnectionKey.php',
+        'zoer-connect/includes/CopiedFence.php',
         'zoer-connect/includes/DatabaseExporter.php',
         'zoer-connect/includes/Diagnostics.php',
         'zoer-connect/includes/ExportAdmin.php',

@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.9.0
+Stable tag: 0.9.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,9 @@ Large local exports run in a DDEV CLI worker independently of HTTP time limits. 
 Upload and activate the plugin. Open Tools > Zoer Connect to generate connection info and configure direction permissions. New connection keys prepare shared-hosting migration automatically. If storage or hosting compatibility blocks preparation, resolve the administrator diagnostics and save Push permissions to retry; existing incomplete setups retain manual recovery controls. Private storage must be outside the public document root. Deactivation/uninstall preserve private journals; do not remove the connector or MU bootstrap during an active transfer.
 
 == Changelog ==
+
+= 0.9.1 =
+Import setup replaces a request fence copied from another site. A site restored from a hosting backup, migrated or cloned from another Zoer Connect site arrives with that site's wp-content/mu-plugins/000-zoer-connect-fence.php, whose paths belong to the other installation; setup stopped with "Existing MU fence differs; inspect it before replacement". Setup now recognises an exact Zoer Connect fence written for other paths and installs this site's own. Any other file is still refused, and a fence for this folder with an earlier private storage folder is replaced only while that folder holds no paused transfer. Import readiness of upgraded sites is unchanged.
 
 = 0.9.0 =
 Includes the unreleased 0.8.1 retained-storage measurements and opt-in cleanup of old finished imports (off by default; the newest successful recovery point is always kept). Migration fixes: source-pause database exports import through Push and local copies; rows up to 16 MiB import, and a destination whose max_allowed_packet is too small is refused with that reason; resetting the secret key is refused while an unfinished import depends on it, and an administrator can continue an earlier key's import with the current key; another WordPress installation's tables in the same database are excluded from exports and refused by imports; find and replace keeps JSON valid and never changes binary columns; destinations with WordPress in a subdirectory are accepted; exports can include translations (wp-content/languages).
