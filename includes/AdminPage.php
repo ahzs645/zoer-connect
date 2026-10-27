@@ -167,7 +167,7 @@ final class AdminPage {
 .zoer-connect-admin .zc-step-hint{color:var(--zc-muted)}
 .zoer-connect-admin .zc-steps .button{flex:none;margin:0}
 .zoer-connect-admin .zc-check{display:flex;gap:8px;align-items:flex-start;margin:12px 0}
-.zoer-connect-admin .zc-check input{margin-top:2px}
+.zoer-connect-admin .zc-check input{flex:none;margin-top:2px}
 .zoer-connect-admin .zc-inline-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin:8px 0 0}
 .zoer-connect-admin .zc-inline-form label{display:flex;flex-direction:column;gap:4px;font-weight:600;flex:1 1 260px;max-width:480px}
 .zoer-connect-admin .zc-inline-form input[type=text],.zoer-connect-admin .zc-inline-form input[type=number],.zoer-connect-admin .zc-inline-form input:not([type]){width:100%;max-width:none}
@@ -204,6 +204,15 @@ final class AdminPage {
 .zoer-connect-admin .zc-step-text{flex:1 1 calc(100% - 40px)}
 .zoer-connect-admin .zc-steps .button{margin-left:40px}
 .zoer-connect-admin .zc-profile-form .zc-sub{margin-left:0}
+.zoer-connect-admin .zc-pill{min-height:44px}
+.zoer-connect-admin .zc-pill-fix{display:inline-flex;align-items:center;min-height:36px;padding:4px 14px}
+.zoer-connect-admin .zc-tabs .nav-tab{display:inline-flex;align-items:center;min-height:40px}
+.zoer-connect-admin details.zc-more>summary{display:inline-flex;align-items:center;min-height:40px}
+.zoer-connect-admin details.zc-advanced>summary{padding:10px 0}
+.zoer-connect-admin details.zc-collapsible>summary{align-items:center;min-height:40px}
+.zoer-connect-admin details.zc-collapsible:not([open]){padding-top:8px;padding-bottom:8px}
+.zoer-connect-admin input.zc-switch[type=checkbox]{width:44px;height:26px}
+.zoer-connect-admin input.zc-switch[type=checkbox]::before{width:20px;height:20px}
 }
 CSS;
 

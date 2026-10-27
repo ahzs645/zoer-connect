@@ -52,7 +52,7 @@ final class ExportAdmin {
         echo '<form method="post" class="zc-profile-form" action="'.esc_url(admin_url('admin-post.php')).'">';wp_nonce_field('zoer_export_profile');
         echo '<input type="hidden" name="action" value="zoer_export_profile"><input type="hidden" name="operation" value="save">';
         if($id!==null)echo '<input type="hidden" name="profile_id" value="'.esc_attr($id).'">';
-        echo '<label>Profile name <input name="name" required maxlength="80" class="regular-text" value="'.esc_attr($p['name']??'').'"></label><fieldset><legend>Include</legend>';
+        echo '<label>Profile name <input type="text" name="name" required maxlength="80" class="regular-text" value="'.esc_attr($p['name']??'').'"></label><fieldset><legend>Include</legend>';
         $modes=['all'=>'All','active'=>'Active only','selected'=>'Only listed','except'=>'All except listed'];
         foreach(['themes'=>'Themes','plugins'=>'Plugins','media'=>'Media uploads','muplugins'=>'Must-use plugins','languages'=>'Translations','core'=>'WordPress core'] as $key=>$label){
             echo '<label><input type="checkbox" name="'.esc_attr($key).'" '.checked(($p[$key]??false)===true,true,false).'> '.esc_html($label).'</label>';
