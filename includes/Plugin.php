@@ -2,8 +2,9 @@
 namespace ZoerConnect;
 
 final class Plugin {
-    public const VERSION = '0.9.1';
+    public const VERSION = '0.10.0';
     public const THEME_OVERRIDES_ROUTE = '/theme-overrides/(?P<theme>[a-z0-9][a-z0-9._-]{0,79})';
+    public const CODE_DENIED = 'Installing plugin or theme code is disabled for this connection key. Turn on Code in Tools → Zoer Connect, or leave plugins and themes out of the transfer (roll back an import that already includes them).';
     private static bool $applicationPassword = false;
     public static function boot(): void {
         add_action('application_password_did_authenticate', static function () { self::$applicationPassword = true; });
@@ -80,6 +81,28 @@ final class Plugin {
         $plugins=[];foreach((array)get_option('active_plugins',[]) as $file)if(is_string($file)&&$file!=='')$plugins[]=str_contains($file,'/')?strstr($file,'/',true):$file;
         return ['themes'=>array_values(array_unique(array_filter([(string)get_stylesheet(),(string)get_template()]))),'plugins'=>array_values(array_unique($plugins))];
     }
+    /** Key, scope and owner checks for the protected routes. Shared by the MU recovery handler
+     * (before regular plugins load) and the REST permission_callback of the import routes. Reads
+     * the key and the owner's capabilities from the database: persistent caches must never keep
+     * a revoked key or a demoted owner valid. Returns ['record'=>..,'owner'=>..] or ['status'=>..,'message'=>..]. */
+    public static function recoveryAuth(string $route): array {
+        global $wpdb;
+        require_once __DIR__.'/ConnectionKey.php';
+        if (!is_ssl() || is_multisite()) return ['status'=>401,'message'=>'HTTPS and a single WordPress site are required.'];
+        $raw=$wpdb->get_var($wpdb->prepare("SELECT option_value FROM `{$wpdb->options}` WHERE option_name=%s",ConnectionKey::OPTION));
+        $record=is_string($raw)?@unserialize($raw,['allowed_classes'=>false]):null;
+        $token=(string)($_SERVER['HTTP_X_ZOER_CONNECTION']??'');
+        if(!is_array($record)||!ConnectionKey::matches($token,$record))return ['status'=>401,'message'=>'Invalid or revoked connection key.'];
+        $export=str_starts_with($route,'/zoer-connect/v1/exports/paged');
+        if(!ConnectionKey::permits($record,($route==='/zoer-connect/v1/status'?'status':($export?'pull':'push'))))return ['status'=>403,'message'=>$export?'Pull permission is disabled.':'Push permission is disabled.'];
+        // User/pluggable initialization has not run at MU loading time. Read the
+        // current native account and capabilities directly, never trust request IDs.
+        $owner=(int)($record['owner']??0);
+        $caps=$wpdb->get_var($wpdb->prepare("SELECT meta_value FROM `{$wpdb->usermeta}` WHERE user_id=%d AND meta_key=%s",$owner,$wpdb->prefix.'capabilities'));
+        $caps=is_string($caps)?@unserialize($caps,['allowed_classes'=>false]):null;
+        if(!is_array($caps)||($caps['administrator']??false)!==true||!$wpdb->get_var($wpdb->prepare("SELECT ID FROM `{$wpdb->users}` WHERE ID=%d",$owner)))return ['status'=>401,'message'=>'The connection owner must remain an administrator.'];
+        return ['record'=>$record,'owner'=>$owner];
+    }
     /** Runs before regular plugins, including when a transfer left them unusable. */
     public static function earlyImportRecovery(string $route): array {
         global $wpdb;
@@ -87,20 +110,10 @@ final class Plugin {
         require_once __DIR__.'/TransferImport.php';
         require_once __DIR__.'/ImportAdmin.php';
         $fail=static function(int $status,string $message): array { http_response_code($status);return ['code'=>'zoer_import_unavailable','message'=>$message]; };
-        if (!is_ssl() || is_multisite()) return $fail(401,'HTTPS and a single WordPress site are required.');
-        // Persistent caches must never keep a revoked key valid during recovery.
-        $raw=$wpdb->get_var($wpdb->prepare("SELECT option_value FROM `{$wpdb->options}` WHERE option_name=%s",ConnectionKey::OPTION));
-        $record=is_string($raw)?@unserialize($raw,['allowed_classes'=>false]):null;
-        $token=(string)($_SERVER['HTTP_X_ZOER_CONNECTION']??'');
-        if(!is_array($record)||!ConnectionKey::matches($token,$record))return $fail(401,'Invalid or revoked connection key.');
+        $auth=self::recoveryAuth($route);
+        if(isset($auth['status']))return $fail($auth['status'],$auth['message']);
+        ['record'=>$record,'owner'=>$owner]=$auth;
         $export=str_starts_with($route,'/zoer-connect/v1/exports/paged');
-        if(!ConnectionKey::permits($record,($route==='/zoer-connect/v1/status'?'status':($export?'pull':'push'))))return $fail(403,$export?'Pull permission is disabled.':'Push permission is disabled.');
-        // User/pluggable initialization has not run at MU loading time. Read the
-        // current native account and capabilities directly, never trust request IDs.
-        $owner=(int)($record['owner']??0);
-        $caps=$wpdb->get_var($wpdb->prepare("SELECT meta_value FROM `{$wpdb->usermeta}` WHERE user_id=%d AND meta_key=%s",$owner,$wpdb->prefix.'capabilities'));
-        $caps=is_string($caps)?@unserialize($caps,['allowed_classes'=>false]):null;
-        if(!is_array($caps)||($caps['administrator']??false)!==true||!$wpdb->get_var($wpdb->prepare("SELECT ID FROM `{$wpdb->users}` WHERE ID=%d",$owner)))return $fail(401,'The connection owner must remain an administrator.');
         if($route==='/zoer-connect/v1/status'){if(($_SERVER['REQUEST_METHOD']??'GET')!=='GET')return $fail(405,'Unsupported status method.');return self::statusView($record);}
         if($export)return self::earlyExportRecovery($route,$record,$fail);
         if(!preg_match('~^/zoer-connect/v1/imports(?:/([a-f0-9]{32})(?:/(chunks|batch|step|rollback|finish|pause|resume|approve|cleanup))?)?$~D',$route,$m))return $fail(404,'Unknown import operation.');
@@ -114,13 +127,17 @@ final class Plugin {
             if($method==='GET'&&!$id)return $import->list();
             if($method==='GET'&&$id&&!$action)return ($_GET['view']??null)==='upload'?$import->upload($id):$import->status($id);
             if($method!=='POST')return $fail(405,'Unsupported import method.');
+            // Applying an import that carries plugin or theme code needs Code at every step, so turning
+            // Code off stops it. Uploads only reach private staging; status, pause, rollback, finish
+            // and cleanup stay available so a stopped import can always be recovered.
+            if($id&&in_array($action,['step','approve','resume'],true)&&!ConnectionKey::permits($record,'code')&&$import->touchesCode($id))return $fail(403,self::CODE_DENIED);
             if($action==='batch')return self::batchRequest($import,$id);
             $max=$id===null?8388608:2097152;
             $raw=file_get_contents('php://input',false,null,0,$max+1);
             if(strlen($raw)>$max)return $fail(413,$id===null?'Import manifest exceeds 8 MiB. Select fewer artifacts.':'Import request exceeds 2 MiB.');
             $body=$raw===''?[]:json_decode($raw,true,512,JSON_THROW_ON_ERROR);
             if(!is_array($body))return $fail(400,'JSON import data required.');
-            if(!$id){if(!ImportAdmin::ready($root,ABSPATH))return $fail(409,'Complete destination import setup in Tools → Zoer Connect first.');$mode=ImportAdmin::mode($root,ABSPATH);if(($body['migrationMode']??'verified-workers')!==$mode)return $fail(409,'Migration mode differs from destination setup. Refresh the connection.');$body['destinationAdminId']=$owner;return $import->create($body);}
+            if(!$id){if(ConnectionKey::importTouchesCode($body)&&!ConnectionKey::permits($record,'code'))return $fail(403,self::CODE_DENIED);if(!ImportAdmin::ready($root,ABSPATH))return $fail(409,'Complete destination import setup in Tools → Zoer Connect first.');$mode=ImportAdmin::mode($root,ABSPATH);if(($body['migrationMode']??'verified-workers')!==$mode)return $fail(409,'Migration mode differs from destination setup. Refresh the connection.');$body['destinationAdminId']=$owner;return $import->create($body);}
             if($action==='chunks'){
                 if(!is_int($body['index']??null)||!is_int($body['offset']??null)||!is_string($body['data']??null)||strlen($body['data'])>349528)return $fail(400,'Invalid import chunk.');
                 $data=base64_decode($body['data'],true);if($data===false)return $fail(400,'Invalid chunk encoding.');
@@ -218,19 +235,26 @@ final class Plugin {
             $capabilities['themeOverrides']=true;
             // 0.9.0: export profiles may include wp-content/languages (`languages: true`).
             $capabilities['languages']=true;
+            // 0.10.0: plugin and theme files need the separate `code` key scope (permissions.code).
+            $capabilities['codeScope']=true;
             foreach(['replacementRules','replacementVariants','reviewPause','createTables','authorMapping','keepActivePlugins','lateFence','importPauseResume','importCleanup','importList','siteReplace','cachePurge','databaseFilters','resourceModes','mediaSince','diagnostics','safeErrors'] as $capability)$capabilities[$capability]=true;
-            return ['version' => '0.9.1', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull')], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'transferLimits'=>['manifestMaxBytes'=>8388608,'maxFileBytes'=>TransferStorage::FILE_BYTES,'quotaBytes'=>TransferStorage::quota(),'reserveBytes'=>TransferStorage::RESERVE_BYTES,'maxFiles'=>StageStore::MAX_FILES,'maxRecordBytes'=>SnapshotStream::MAX_RECORD_BYTES,'maxRowBytes'=>TableStage::MAX_ROW_BYTES],'batchLimits'=>BatchUpload::limits()];
+            return ['version' => '0.10.0', 'apiVersion' => 2, 'target' => rtrim((string)get_option('home'),'/'), 'stagingReady' => $ready, 'storage'=>$storage, 'migrationMode'=>ImportAdmin::mode($private,ABSPATH), 'capabilities' => $capabilities, 'permissions'=>['push'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'push')),'pull'=>is_array($record)&&ConnectionKey::permits($record,'pull'),'code'=>$record===null || (is_array($record)&&ConnectionKey::permits($record,'code')),'legacyCode'=>is_array($record)&&ConnectionKey::legacyCode($record)], 'maxChunkBytes' => StageStore::CHUNK, 'batchTransports'=>BatchUpload::transports(), 'transferLimits'=>['manifestMaxBytes'=>8388608,'maxFileBytes'=>TransferStorage::FILE_BYTES,'quotaBytes'=>TransferStorage::quota(),'reserveBytes'=>TransferStorage::RESERVE_BYTES,'maxFiles'=>StageStore::MAX_FILES,'maxRecordBytes'=>SnapshotStream::MAX_RECORD_BYTES,'maxRowBytes'=>TableStage::MAX_ROW_BYTES],'batchLimits'=>BatchUpload::limits()];
     }
     public static function routes(): void {
         $register = static function ($path, $method, $handler) {
             register_rest_route('zoer-connect/v1', $path, [
-                'methods' => $method, 'permission_callback' => static function($request) use($path){
+                'methods' => $method, 'permission_callback' => static function($request) use($path,$method){
                     $auth=self::authorize($request);if(is_wp_error($auth))return $auth;
                     $record=get_option(ConnectionKey::OPTION,null);
                     // Diagnostics are read-only preflight data for either transfer direction.
                     $scopes=str_starts_with($path,'/exports')?['pull']:($path==='/status'?['status']:(in_array($path,['/diagnostics','/publication','/theme-overrides',self::THEME_OVERRIDES_ROUTE],true)?['push','pull']:['push']));
                     $permitted=is_array($record)&&array_filter($scopes,static fn($scope)=>ConnectionKey::permits($record,$scope));
                     if(($scopes===['pull']||$record!==null) && !$permitted)return new \WP_Error('zoer_permission_disabled',implode(' or ',array_map('ucfirst',$scopes)).' permission is disabled on this site.',['status'=>403]);
+                    // Staging plugin or theme files additionally needs Code (application passwords are administrators already).
+                    if($path==='/jobs'&&$method==='POST'&&$request&&(string)$request->get_header('x-zoer-connection')!==''&&is_array($record)&&!ConnectionKey::permits($record,'code')){
+                        $body=$request->get_json_params();
+                        if(is_array($body)&&ConnectionKey::touchesCode($body['files']??null))return new \WP_Error('zoer_permission_disabled',self::CODE_DENIED,['status'=>403]);
+                    }
                     return true;
                 },
                 'callback' => static function ($request) use ($handler) {
@@ -253,7 +277,13 @@ final class Plugin {
             ]);
         };
         foreach(['/imports','/imports/(?P<id>[a-f0-9]{32})','/imports/(?P<id>[a-f0-9]{32})/(?P<action>chunks|batch|step|rollback|finish|pause|resume|approve|cleanup)'] as $path) {
-            register_rest_route('zoer-connect/v1',$path,['methods'=>'GET,POST','permission_callback'=>'__return_true','callback'=>static function($r){
+            // The MU request fence answers these routes before ordinary plugins load (earlyImportRecovery);
+            // this REST registration is the fallback when the fence is not installed. Both authenticate
+            // through recoveryAuth, which reads the key from the database rather than the option cache.
+            register_rest_route('zoer-connect/v1',$path,['methods'=>'GET,POST','permission_callback'=>static function($r){
+                $auth=self::recoveryAuth((string)$r->get_route());
+                return isset($auth['status']) ? new \WP_Error('zoer_import_unavailable',$auth['message'],['status'=>$auth['status']]) : true;
+            },'callback'=>static function($r){
                 $result=self::earlyImportRecovery($r->get_route());$status=http_response_code();return new \WP_REST_Response($result,$status>=400?$status:200,['Cache-Control'=>'no-store']);
             }]);
         }
@@ -311,7 +341,7 @@ final class Plugin {
     }
     public static function admin(): void {
         if (!current_user_can('manage_options')) return;
-        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.9.1 — WordPress transfers and recovery.</p>';
+        echo '<div class="wrap"><h1>Zoer Connect</h1><p>Version 0.10.0 — WordPress transfers and recovery.</p>';
         require_once __DIR__.'/AdminPage.php';
         AdminPage::render();
         echo '</div>';

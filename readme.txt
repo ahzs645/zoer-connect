@@ -1,7 +1,7 @@
 === Zoer Connect ===
 Requires at least: 6.5
 Requires PHP: 8.1
-Stable tag: 0.9.1
+Stable tag: 0.10.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -10,7 +10,7 @@ Authenticated WordPress transfers and recovery for Zoer.
 == Description ==
 Connect WordPress to Zoer using a scoped connector key over HTTPS. Pull selected resources or push a verified export from a managed local DDEV source. Imports preserve destination URLs, administrator accounts and connector identity, stage matching database tables, and retain file/table backups for verified rollback.
 
-Generating a new connection key enables Push and automatically prepares shared-hosting migration. Pull stays off until enabled. Shared-hosting migration installs site-level MU request protection without inspecting or restarting shared PHP workers. Publishing still requires confirmation of selected content in Zoer. Existing permissions, revocations and advanced setup are preserved. It keeps original tables and selected files for recovery. Concurrent live edits are not merged and may be overwritten; avoid editing during migration. Earlier requests and external writers are not guaranteed to be stopped. Detected conflicts can halt activation or prevent automatic rollback. Advanced verified-worker mode retains the stricter Linux worker checks.
+New connection keys start with Push, Pull and Code off; choosing Push when generating the key (or turning it on later) automatically prepares shared-hosting migration. Push stages and imports media uploads and the database. Writing plugin or theme files (PHP that WordPress runs) additionally needs the separate Code permission, which is off unless an administrator turns it on. Shared-hosting migration installs site-level MU request protection without inspecting or restarting shared PHP workers. Publishing still requires confirmation of selected content in Zoer. Existing permissions, revocations and advanced setup are preserved. It keeps original tables and selected files for recovery. Concurrent live edits are not merged and may be overwritten; avoid editing during migration. Earlier requests and external writers are not guaranteed to be stopped. Detected conflicts can halt activation or prevent automatic rollback. Advanced verified-worker mode retains the stricter Linux worker checks.
 
 WordPress requests reaching the protection pause during application and recovery; authenticated recovery remains available before regular plugins/themes load. Exclude /wp-json/zoer-connect/ and equivalent rest_route URLs from every page cache/CDN before connecting, then purge existing entries. A no-store response alone cannot override a host configured to cache authenticated API responses. The site needs coherent private journal storage and functioning filesystem/database locks. This does not provide distributed multi-host coordination.
 
@@ -24,6 +24,9 @@ Large local exports run in a DDEV CLI worker independently of HTTP time limits. 
 Upload and activate the plugin. Open Tools > Zoer Connect to generate connection info and configure direction permissions. New connection keys prepare shared-hosting migration automatically. If storage or hosting compatibility blocks preparation, resolve the administrator diagnostics and save Push permissions to retry; existing incomplete setups retain manual recovery controls. Private storage must be outside the public document root. Deactivation/uninstall preserve private journals; do not remove the connector or MU bootstrap during an active transfer.
 
 == Changelog ==
+
+= 0.10.0 (development) =
+Connection key scopes. New keys start with Push off, and Push no longer implies installing code: transfers that write wp-content/plugins or wp-content/themes, or replace the destination's plugin or theme selection, need the new Code permission (off by default, with a warning in Tools > Zoer Connect). Turning Code off stops an import that carries code from being applied; status, pause, finish, rollback and cleanup stay available. Keys created before 0.10.0 with Push keep code access so existing pairings keep working; the Permissions card flags them as legacy keys until an administrator saves a choice, and resetting such a key asks for Code again. GET /status reports permissions.code and permissions.legacyCode and the codeScope capability. Signed updates: release update.json files can carry an Ed25519 signature; when ZOER_CONNECT_UPDATE_PUBLIC_KEY (wp-config.php) or the plugin's built-in key is set, unsigned or badly signed updates are refused, and without a key administrators see a notice that updates are unsigned. Sites on the stable channel no longer accept a release candidate download. The import routes' REST fallback now authenticates in its permission callback.
 
 = 0.9.1 =
 Import setup replaces a request fence copied from another site. A site restored from a hosting backup, migrated or cloned from another Zoer Connect site arrives with that site's wp-content/mu-plugins/000-zoer-connect-fence.php, whose paths belong to the other installation; setup stopped with "Existing MU fence differs; inspect it before replacement". Setup now recognises an exact Zoer Connect fence written for other paths and installs this site's own. Any other file is still refused, and a fence for this folder with an earlier private storage folder is replaced only while that folder holds no paused transfer. Import readiness of upgraded sites is unchanged.

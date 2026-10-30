@@ -33,7 +33,7 @@ try{
  check(str_contains($settings,'value="zoer_update_channel"')&&str_contains($settings,'Also offer release candidates')&&str_contains($settings,'fixture:zoer_update_channel'),'settings tab offers the update channel with its nonce');
  foreach(['connection','activity','settings'] as $tab)check(str_contains($html,'aria-controls="zoer-panel-'.$tab.'"')&&panel($html,$tab)!=='','tab '.$tab.' controls an existing panel');
  // Form contract: every action, field and nonce name of the previous page is still posted.
- foreach(['name="zoer_connection_action" value="rotate"','name="allow_push"','name="allow_pull"','name="zoer_connection_action" value="permissions"','name="zoer_import_setup_action" value="shared"','name="replacement_accepted" value="1"','name="zoer_import_setup_action" value="install"','name="zoer_storage_path"','name="zoer_storage_save" value="1"','name="zoer_quota_bytes"','name="zoer_quota_save" value="1"','name="action" value="zoer_export_profile"','name="themesMode"','name="pluginsItems"','name="mediaSince"','name="excludes"','value="fixture:zoer_connection_settings"','value="fixture:zoer_import_setup_shared"','value="fixture:zoer_import_setup_install"','value="fixture:zoer_connect_storage"','value="fixture:zoer_connect_quota"','value="fixture:zoer_export_profile"'] as $needle)if(!str_contains($html,$needle))throw new RuntimeException('Missing form contract: '.$needle);
+ foreach(['name="zoer_connection_action" value="rotate"','name="allow_push"','name="allow_pull"','name="allow_code"','name="zoer_connection_action" value="permissions"','name="zoer_import_setup_action" value="shared"','name="replacement_accepted" value="1"','name="zoer_import_setup_action" value="install"','name="zoer_storage_path"','name="zoer_storage_save" value="1"','name="zoer_quota_bytes"','name="zoer_quota_save" value="1"','name="action" value="zoer_export_profile"','name="themesMode"','name="pluginsItems"','name="mediaSince"','name="excludes"','value="fixture:zoer_connection_settings"','value="fixture:zoer_import_setup_shared"','value="fixture:zoer_import_setup_install"','value="fixture:zoer_connect_storage"','value="fixture:zoer_connect_quota"','value="fixture:zoer_export_profile"'] as $needle)if(!str_contains($html,$needle))throw new RuntimeException('Missing form contract: '.$needle);
  check(true,'form actions, field names and nonce actions preserved');
  check(substr_count($html,'action="/tools.php?page=zoer-connect"')===2&&substr_count($html,'action="/admin-post.php"')===4,'connection forms keep their action URL; export, update-channel, size and retention forms post to admin-post');
  // Markup hygiene: balanced tags, unique IDs, no inline style attributes, scoped CSS, labelled switches.
@@ -44,15 +44,17 @@ try{
  $selectors=array_filter(array_map('trim',preg_split('~[{},]~',str_replace('{}',',',$rules))));
  $unscoped=array_filter($selectors,static fn($s)=>!str_starts_with($s,'.zoer-connect-admin'));
  check($selectors&&!$unscoped,'every CSS selector is scoped to .zoer-connect-admin'.($unscoped?': '.implode(' | ',$unscoped):''));
- foreach(['zoer-allow-pull','zoer-allow-push','zoer-storage-path','zoer-quota-bytes','zoer-replacement-accepted'] as $id)if(!str_contains($html,'for="'.$id.'"'))throw new RuntimeException('Unlabelled control '.$id);
+ foreach(['zoer-allow-pull','zoer-allow-push','zoer-allow-code','zoer-storage-path','zoer-quota-bytes','zoer-replacement-accepted'] as $id)if(!str_contains($html,'for="'.$id.'"'))throw new RuntimeException('Unlabelled control '.$id);
  check(str_contains($html,'role="switch"'),'permission toggles are labelled switches');
  // Storage form keeps its behavior; the card moves to Settings once ready.
  $html=page(['zoer_storage_save'=>'1','zoer_storage_path'=>$outside,'_wpnonce'=>'fixture:zoer_connect_storage']);
  check(get_option('zoer_connect_storage_dir')===$outside&&str_contains($html,'Private storage configured.'),'storage form configures the private folder');
  check(pill($html,'Private storage')==='ok|Ready|'&&str_contains(panel($html,'settings'),'id="zoer-storage"')&&str_contains(panel($html,'settings'),'Private storage configured.'),'ready storage moves to Settings with its notice');
  check(substr_count(panel($html,'connection'),'<li class="is-done"')===1,'completed step stays visible while others remain');
- // First key: Push is on, imports are prepared in the same POST and setup disappears.
- $html=page(['zoer_connection_action'=>'rotate','_wpnonce'=>$nonce]);
+ // Key generation offers Push and Code, both unchecked, with a warning that Code installs code.
+ check(str_contains($connection,'id="zoer-new-push" name="allow_push" value="1"')&&str_contains($connection,'id="zoer-new-code" name="allow_code" value="1"')&&!preg_match('~id="zoer-new-(?:push|code)"[^>]*checked~',$connection)&&str_contains($connection,'which WordPress runs as code'),'new key form offers unchecked Push and Code choices with a code warning');
+ // First key with Push chosen: imports are prepared in the same POST and setup disappears.
+ $html=page(['zoer_connection_action'=>'rotate','_wpnonce'=>$nonce,'allow_push'=>'1']);
  check(ImportAdmin::ready($outside,$root)&&substr_count($html,'<textarea id="zoer-connection-info"')===1&&str_contains($html,'Copy connection info'),'key shown once with copy control');
  check(pill($html,'Push')==='ok|On|'&&pill($html,'Imports')==='ok|Ready|'&&pill($html,'Pull')==='off|Off|#zoer-permissions','pills reflect the POST result in the same response');
  check(!str_contains($html,'<ol class="zc-steps">')&&str_contains($html,'Connection key active')&&str_contains(panel($html,'settings'),'id="zoer-import-setup"'),'setup steps hidden once complete; imports card moves to Settings');

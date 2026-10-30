@@ -4,6 +4,13 @@ namespace ZoerConnect;
 /**
  * WordPress updates from qualified, publicly distributed GitHub packages. Sites stay on stable
  * releases unless an administrator also asks for release candidates (0.8.0).
+ *
+ * Signed updates (0.10.0): update.json carries an Ed25519 `signature` over SIGNED_MESSAGE (version
+ * and ZIP SHA-256), so a GitHub release whose assets were replaced cannot vouch for itself. The
+ * verifying key is PUBLIC_KEY, or ZOER_CONNECT_UPDATE_PUBLIC_KEY from wp-config.php (base64 of the
+ * 32-byte public key). With a key, unsigned or badly signed updates are refused; an unusable key
+ * refuses every update. Without a key, updates keep the SHA-256 check only and administrators see
+ * a notice that updates are unsigned.
  */
 final class GitHubUpdater {
     private const PLUGIN = 'zoer-connect/zoer-connect.php';
@@ -15,11 +22,52 @@ final class GitHubUpdater {
     private const CANDIDATE = '/^[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?$/D';
     // Retain verification of an old download URL already cached by WordPress.
     private const LEGACY_RAW = 'https://raw.githubusercontent.com/ahzs645/zoer-connect-releases/main';
+    /** Base64 Ed25519 public key that release manifests are signed with; empty until a signing key is provisioned. */
+    public const PUBLIC_KEY = '';
+    /** Exact bytes a release signature covers. */
+    private const SIGNED_MESSAGE = "zoer-connect-update-v1\n%s\n%s\n";
 
     public static function boot(): void {
         add_filter('update_plugins_github.com', [self::class, 'check'], 10, 4);
         add_filter('upgrader_pre_download', [self::class, 'download'], 10, 4);
         add_action('admin_post_zoer_update_channel', [self::class, 'saveChannel']);
+        add_action('admin_notices', [self::class, 'signingNotice']);
+    }
+
+    /** The configured verifying key: null when none is configured, false when one is configured but unusable. */
+    public static function publicKey(): string|false|null {
+        $configured = defined('ZOER_CONNECT_UPDATE_PUBLIC_KEY') ? constant('ZOER_CONNECT_UPDATE_PUBLIC_KEY') : self::PUBLIC_KEY;
+        if ($configured === '' || $configured === null) return null;
+        $key = is_string($configured) ? base64_decode($configured, true) : false;
+        return is_string($key) && strlen($key) === 32 && function_exists('sodium_crypto_sign_verify_detached') ? $key : false;
+    }
+
+    /** True when the manifest may be trusted: signed by the configured key, or no key is configured. */
+    public static function signatureAccepted(array $manifest): bool {
+        $key = self::publicKey();
+        if ($key === null) return true;
+        if ($key === false || !is_string($manifest['signature'] ?? null)) return false;
+        $signature = base64_decode($manifest['signature'], true);
+        if (!is_string($signature) || strlen($signature) !== 64) return false;
+        try { return sodium_crypto_sign_verify_detached($signature, sprintf(self::SIGNED_MESSAGE, $manifest['version'], $manifest['sha256']), $key); }
+        catch (\Throwable $e) { return false; }
+    }
+
+    /** Plugins, Updates and Tools → Zoer Connect: say when updates are not signature-checked. */
+    public static function signingNotice(): void {
+        if (!current_user_can('update_plugins')) return;
+        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+        if ($screen && !in_array($screen->id ?? '', ['plugins', 'update-core', 'tools_page_zoer-connect'], true)) return;
+        $text = self::signingStatus();
+        if ($text !== null) echo '<div class="notice notice-'.(self::publicKey() === false ? 'error' : 'warning').'"><p>'.esc_html($text).'</p></div>';
+    }
+
+    /** Null when signed updates are enforced; otherwise what an administrator needs to know. */
+    public static function signingStatus(): ?string {
+        $key = self::publicKey();
+        if ($key === null) return 'Zoer Connect updates are unsigned: downloads are checked only against the SHA-256 published in the same GitHub release. Define ZOER_CONNECT_UPDATE_PUBLIC_KEY in wp-config.php to require signed updates.';
+        if ($key === false) return 'Zoer Connect refuses all updates: the update signing key is not a base64 Ed25519 public key or this PHP has no sodium support. Fix ZOER_CONNECT_UPDATE_PUBLIC_KEY in wp-config.php.';
+        return null;
     }
 
     public static function releaseCandidates(): bool { return get_option(self::CHANNEL_OPTION, 'stable') === 'rc'; }
@@ -43,7 +91,8 @@ final class GitHubUpdater {
             .'<form method="post" action="'.esc_url(admin_url('admin-post.php')).'">'.wp_nonce_field('zoer_update_channel', '_wpnonce', true, false)
             .'<input type="hidden" name="action" value="zoer_update_channel">'
             .'<p><label><input type="checkbox" name="release_candidates" value="1"'.($rc ? ' checked' : '').'> Also offer release candidates</label></p>'
-            .'<p class="description">Release candidates are test builds published before a stable release. WordPress still asks before updating, and each download is checked against its published SHA-256. Leave this off on production sites.</p>'
+            .'<p class="description">Release candidates are test builds published before a stable release. WordPress still asks before updating, and each download is checked against its published SHA-256'.(self::publicKey() === null ? '' : ' and release signature').'. Leave this off on production sites.</p>'
+            .(self::signingStatus() !== null ? '<p class="description">'.esc_html(self::signingStatus()).'</p>' : '')
             .'<p><button type="submit" class="button">Save</button></p></form></details>';
     }
 
@@ -62,6 +111,7 @@ final class GitHubUpdater {
             !preg_match($candidate ? self::CANDIDATE : self::STABLE, $data['version']) ||
             !is_string($data['sha256']??null) || !preg_match('/^[a-f0-9]{64}$/D', $data['sha256'])) return null;
         if ($version !== '' && $version !== $data['version']) return null;
+        if (!self::signatureAccepted($data)) return null;
         $data['package'] = $legacy
             ? self::LEGACY_RAW.'/releases/v'.$data['version'].'/zoer-connect-'.$data['version'].'.zip'
             : self::UPDATE_URI.'/releases/download/v'.$data['version'].'/zoer-connect-'.preg_replace('/-rc\.[0-9]+$/', '', $data['version']).'.zip';
@@ -109,8 +159,9 @@ final class GitHubUpdater {
             if (!preg_match($legacyPattern, $package, $matches)) return false;
             $legacy = true;
         }
-        $release = self::manifest($matches[1], $legacy, !$legacy);
-        if (!$release || $package !== $release['package']) return new \WP_Error('zoer_connect_update_manifest', 'The Zoer Connect release manifest could not be verified.');
+        // Only sites on the release-candidate channel accept a candidate's manifest (and so its ZIP).
+        $release = self::manifest($matches[1], $legacy, !$legacy && self::releaseCandidates());
+        if (!$release || $package !== $release['package']) return new \WP_Error('zoer_connect_update_manifest', 'The Zoer Connect release manifest could not be verified'.(self::publicKey() === null ? '' : ' or is not signed with the configured update key').'.');
         if (!function_exists('download_url')) require_once ABSPATH.'wp-admin/includes/file.php';
         $file = download_url($package, 300);
         if (is_wp_error($file)) return $file;

@@ -6,13 +6,13 @@
 ini_set('memory_limit','512M');
 require __DIR__.'/fixtures/import-site.php';
 require __DIR__.'/../includes/Plugin.php';
-require __DIR__.'/../includes/ConnectionKey.php';
+require_once __DIR__.'/../includes/ConnectionKey.php';
 use ZoerConnect\TransferImport;
 use ZoerConnect\ConnectionKey;
 use ZoerConnect\Plugin;
 $base=fixtureBase();$target='https://dest.example';$db=destination();
 $wpdb=$db;
-[$token,$record]=ConnectionKey::create(1);$owner=$record['hash'];
+[$token,$record]=ConnectionKey::create(1,null,true,true);$owner=$record['hash'];
 $db->replace($db->options,['option_name'=>ConnectionKey::OPTION,'option_value'=>serialize($record),'autoload'=>'no']);
 define('ABSPATH',$base.'/public/');define('ZOER_CONNECT_STORAGE_DIR',$base.'/private');
 $_SERVER=['DOCUMENT_ROOT'=>$base.'/public','REQUEST_METHOD'=>'GET','HTTP_X_ZOER_CONNECTION'=>$token];$_GET=[];
@@ -46,6 +46,13 @@ try{
  expect($s['phase']==='complete'&&!$fenced&&$new(true)->finish($id)===$s&&file_get_contents($statePath($id))===$before,'compact finish is idempotent and never rewrites a complete journal');
  $_GET=['view'=>'compact'];$_SERVER['REQUEST_METHOD']='POST';
  expect(Plugin::earlyImportRecovery('/zoer-connect/v1/imports/'.$id.'/finish')===$s&&file_get_contents($statePath($id))===$before,'native compact finish replay acknowledges completion without journal mutation');
+ // Code scope (0.10.0): with Code off, applying a theme import is refused; finishing (and rollback) stay available.
+ $pushOnly=$record;$pushOnly['code']=false;$db->replace($db->options,['option_name'=>ConnectionKey::OPTION,'option_value'=>serialize($pushOnly),'autoload'=>'no']);
+ expect($new()->touchesCode($id),'an import carrying theme files is recorded as code');
+ // The refusal is answered as a 403 (the CLI cannot set response codes once output started).
+ foreach(['step','approve','resume'] as $action){$r=@Plugin::earlyImportRecovery('/zoer-connect/v1/imports/'.$id.'/'.$action);expect(($r['code']??null)==='zoer_import_unavailable'&&$r['message']===Plugin::CODE_DENIED&&file_get_contents($statePath($id))===$before,"Code off refuses $action of a code import");}
+ expect(Plugin::earlyImportRecovery('/zoer-connect/v1/imports/'.$id.'/finish')===$s,'Code off still lets a code import finish');
+ $db->replace($db->options,['option_name'=>ConnectionKey::OPTION,'option_value'=>serialize($record),'autoload'=>'no']);
  $_GET=[];$_SERVER['REQUEST_METHOD']='GET';
  expect($new()->finish($id)['artifacts']===$full['artifacts'],'legacy finish on complete still returns all detailed artifacts');
  $s=rollbackAll(fn()=>$new(true),$id);

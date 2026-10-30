@@ -63,9 +63,9 @@ wp source eval-file /zc/seed-source.php --user=srcadmin > "$STATE/source-seed.js
 wp dest eval-file /zc/seed-dest.php --user=destadmin > "$STATE/dest-seed.json"
 
 echo "Generating connection keys through the admin form code path"
-wp source eval-file /zc/connection.php rotate --user=srcadmin > "$STATE/source-rotate.json"
+wp source eval-file /zc/connection.php rotate push --user=srcadmin > "$STATE/source-rotate.json"
 wp source eval-file /zc/connection.php permissions push pull --user=srcadmin > "$STATE/source-permissions.json"
-wp dest eval-file /zc/connection.php rotate --user=destadmin > "$STATE/dest-rotate.json"
+wp dest eval-file /zc/connection.php rotate push code --user=destadmin > "$STATE/dest-rotate.json"
 python3 - "$STATE" <<'PY'
 import json, os, sys
 state = sys.argv[1]

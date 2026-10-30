@@ -7,8 +7,8 @@ function default_check($ok,$message){if(!$ok)throw new RuntimeException($message
 $admin=get_users(['role'=>'administrator','number'=>1])[0];wp_set_current_user($admin->ID);
 $_SERVER['HTTPS']='on';$_SERVER['DOCUMENT_ROOT']=rtrim(ABSPATH,'/');$_SERVER['REQUEST_METHOD']='POST';
 function connection_form($action,$extra=[]){$_POST=['zoer_connection_action'=>$action,'_wpnonce'=>wp_create_nonce('zoer_connection_settings')]+$extra;$_REQUEST=$_POST;ob_start();try{ConnectionAdmin::render();return ob_get_contents();}finally{ob_end_clean();}}
-$html=connection_form('rotate');$record=get_option(ConnectionKey::OPTION);
-default_check($record['push']&&!$record['pull'],'installed plugin generates Push-enabled, Pull-disabled key');
+$html=connection_form('rotate',['allow_push'=>'1']);$record=get_option(ConnectionKey::OPTION);
+default_check($record['push']&&!$record['pull']&&$record['code']===false,'installed plugin generates the chosen Push key with Pull and Code off (0.10.0)');
 $private=Plugin::storageRoot();default_check(ImportAdmin::mode($private,ABSPATH)==='shared-replacement','installed plugin automatically prepares shared migration');
 default_check(!file_exists($private.'/write-fence.json'),'preparation leaves site serving normally');
 default_check(str_contains($html,'Shared-hosting migration is ready'),'administrator receives success notice');

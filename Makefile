@@ -3,7 +3,7 @@ build:
 	python3 scripts/build.py
 lint:
 	php -l zoer-connect.php
-	@for file in includes/*.php; do php -l "$$file" || exit 1; done
+	@for file in includes/*.php scripts/*.php; do php -l "$$file" || exit 1; done
 test: lint
 	php tests/run.php
 	php tests/storage.php
@@ -36,6 +36,7 @@ test: lint
 	php tests/peer-import.php
 	php tests/snapshot-stream.php
 	php tests/github-updater.php
+	php tests/github-updater.php --bad-key
 	php tests/rewrite-refresh.php
 	php tests/cache-purge.php
 	php tests/publication-identity.php

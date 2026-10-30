@@ -68,7 +68,7 @@ final class AdminPage {
     /** At most three steps, shown only while one still applies and is incomplete. */
     private static function steps(array $s): void {
         $steps=[['Create a connection key','Paste it into Zoer to link this site.',$s['key'],'#zoer-connection','Create key'],['Make private storage available','Transfers are staged in a folder outside the public website.',$s['storage'],'#zoer-storage','Choose folder']];
-        // New keys turn on Push, so import setup applies until Push is turned off.
+        // Import setup applies before a key exists and while Push is on (new keys start with Push off).
         if(!$s['key']||$s['push'])$steps[]=['Set up imports','Lets Zoer push content to this site.',$s['imports'],'#zoer-import-setup','Set up'];
         if(!in_array(false,array_column($steps,2),true))return;
         echo '<section class="zc-card zc-setup" aria-labelledby="zoer-setup-title"><h2 id="zoer-setup-title">Finish setup</h2><ol class="zc-steps">';

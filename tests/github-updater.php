@@ -26,6 +26,11 @@ namespace {
     function esc_url($url){return $url;}
     function esc_html($text){return htmlspecialchars((string)$text,ENT_QUOTES);}
     function wp_nonce_field($action,$name,$referer,$echo){return '<input type="hidden" name="'.$name.'" value="nonce-'.$action.'">';}
+    $screen=null;
+    function get_current_screen(){return $GLOBALS['screen'];}
+    function notice(): string {ob_start();\ZoerConnect\GitHubUpdater::signingNotice();return (string)ob_get_clean();}
+    // `--bad-key`: a configured key that is not a 32-byte base64 Ed25519 key refuses every update.
+    if (in_array('--bad-key', $argv, true)) define('ZOER_CONNECT_UPDATE_PUBLIC_KEY', base64_encode(str_repeat('k', 31)));
 }
 namespace ZoerConnect {
     require __DIR__.'/../includes/GitHubUpdater.php';
@@ -40,8 +45,20 @@ namespace ZoerConnect {
     $GLOBALS['responses'][$latest]=['code'=>200,'body'=>json_encode($manifest)];
     $GLOBALS['responses'][$versioned]=['code'=>200,'body'=>json_encode($manifest)];
     $GLOBALS['downloadContent']=$content;
+    if (in_array('--bad-key', $argv, true)) {
+        $signed=$manifest+['signature'=>base64_encode(str_repeat('s',64))];
+        $GLOBALS['responses'][$latest]=['code'=>200,'body'=>json_encode($signed)];
+        $GLOBALS['responses'][$versioned]=['code'=>200,'body'=>json_encode($signed)];
+        \check(GitHubUpdater::publicKey()===false&&str_contains((string)GitHubUpdater::signingStatus(),'refuses all updates'),'Unusable key not reported.');
+        \check(str_contains(\notice(),'notice-error'),'Unusable key notice missing.');
+        \check(GitHubUpdater::check(false,['Version'=>'0.5.1'],'zoer-connect/zoer-connect.php',[])===false,'Update offered with an unusable key.');
+        $file=GitHubUpdater::download(false,$package,null,['plugin'=>'zoer-connect/zoer-connect.php']);
+        \check($file instanceof \WP_Error&&$file->code==='zoer_connect_update_manifest'&&!$GLOBALS['downloaded'],'Download accepted with an unusable key.');
+        echo "PASS a configured but unusable update key refuses every update and shows an error notice\n";
+        exit;
+    }
     GitHubUpdater::boot();
-    \check(isset($GLOBALS['filters']['update_plugins_github.com'],$GLOBALS['filters']['upgrader_pre_download'],$GLOBALS['filters']['admin_post_zoer_update_channel']),'Update hooks missing.');
+    \check(isset($GLOBALS['filters']['update_plugins_github.com'],$GLOBALS['filters']['upgrader_pre_download'],$GLOBALS['filters']['admin_post_zoer_update_channel'],$GLOBALS['filters']['admin_notices']),'Update hooks missing.');
     $update=GitHubUpdater::check(false,['Version'=>'0.5.1'],'zoer-connect/zoer-connect.php',[]);
     \check(is_array($update)&&$update['version']===$version&&$update['package']===$package,'Qualified update not offered.');
     \check(GitHubUpdater::check(false,['Version'=>$version],'zoer-connect/zoer-connect.php',[])===false,'Current version offered again.');
@@ -126,6 +143,11 @@ namespace ZoerConnect {
         \check(GitHubUpdater::check(false,['Version'=>'0.7.0'],'zoer-connect/zoer-connect.php',[])===false,'Bad releases list produced an update.');
     }
     unset($GLOBALS['options'][GitHubUpdater::CHANNEL_OPTION]);
+    // The stable channel never downloads a release candidate, even one a cached update check still offers.
+    $GLOBALS['responses'][$repo.'/releases/download/v0.8.0-rc.2/update.json']=$manifestOf('0.8.0-rc.2',$rcContent);
+    $GLOBALS['downloadContent']=$rcContent;$before=count($GLOBALS['downloaded']);
+    $file=GitHubUpdater::download(false,$rcPackage,null,['plugin'=>'zoer-connect/zoer-connect.php']);
+    \check($file instanceof \WP_Error&&$file->code==='zoer_connect_update_manifest'&&count($GLOBALS['downloaded'])===$before,'Stable channel downloaded a release candidate.');
     // --- Settings form ---
     $GLOBALS['can']=false;
     \check(GitHubUpdater::settingsCard()==='','Card shown without update_plugins.');
@@ -140,6 +162,42 @@ namespace ZoerConnect {
     $_POST=[];
     try{GitHubUpdater::saveChannel();}catch(\Redirected $e){}
     \check(!isset($GLOBALS['options'][GitHubUpdater::CHANNEL_OPTION])&&$GLOBALS['cleared']===2,'Opting out did not remove the channel.');
+    // --- Signed updates (0.10.0) ---
+    \check(GitHubUpdater::PUBLIC_KEY===''||defined('ZOER_CONNECT_UPDATE_PUBLIC_KEY'),'Test assumes no shipped key.');
+    \check(GitHubUpdater::publicKey()===null&&str_contains((string)GitHubUpdater::signingStatus(),'unsigned'),'Unsigned updates not reported.');
+    $GLOBALS['screen']=(object)['id'=>'dashboard'];\check(\notice()==='','Unsigned notice shown outside plugin screens.');
+    $GLOBALS['screen']=(object)['id'=>'plugins'];\check(str_contains(\notice(),'notice-warning')&&str_contains(\notice(),'ZOER_CONNECT_UPDATE_PUBLIC_KEY'),'Unsigned notice missing on Plugins.');
+    $GLOBALS['can']=false;\check(\notice()==='','Unsigned notice shown without update_plugins.');$GLOBALS['can']=true;
+    \check(str_contains(GitHubUpdater::settingsCard(),'updates are unsigned'),'Settings card does not say updates are unsigned.');
+    $pair=sodium_crypto_sign_keypair();$secret=sodium_crypto_sign_secretkey($pair);$other=sodium_crypto_sign_secretkey(sodium_crypto_sign_keypair());
+    define('ZOER_CONNECT_UPDATE_PUBLIC_KEY',base64_encode(sodium_crypto_sign_publickey($pair)));
+    $sign=fn(string $v,string $sha,string $key)=>base64_encode(sodium_crypto_sign_detached("zoer-connect-update-v1\n$v\n$sha\n",$key));
+    \check(GitHubUpdater::signingStatus()===null&&\notice()===''&&!str_contains(GitHubUpdater::settingsCard(),'unsigned'),'Signed updates still reported as unsigned.');
+    $serve=function(array $m)use($latest,$versioned){$GLOBALS['responses'][$latest]=['code'=>200,'body'=>json_encode($m)];$GLOBALS['responses'][$versioned]=['code'=>200,'body'=>json_encode($m)];};
+    $GLOBALS['downloadContent']=$content;
+    $refused=function(string $label)use($package){
+        \check(GitHubUpdater::check(false,['Version'=>'0.5.1'],'zoer-connect/zoer-connect.php',[])===false,$label.' offered.');
+        $before=count($GLOBALS['downloaded']);$file=GitHubUpdater::download(false,$package,null,['plugin'=>'zoer-connect/zoer-connect.php']);
+        \check($file instanceof \WP_Error&&$file->code==='zoer_connect_update_manifest'&&str_contains($file->message,'signed')&&count($GLOBALS['downloaded'])===$before,$label.' downloaded.');
+    };
+    $serve($manifest);$refused('Unsigned release');
+    $serve($manifest+['signature'=>'not base64!']);$refused('Malformed signature');
+    $serve($manifest+['signature'=>$sign($version,$manifest['sha256'],$other)]);$refused('Release signed by another key');
+    $serve($manifest+['signature'=>$sign($version,hash('sha256','other ZIP'),$secret)]);$refused('Signature over another checksum');
+    $serve($manifest+['signature'=>$sign('0.5.3',$manifest['sha256'],$secret)]);$refused('Signature over another version');
+    $serve($manifest+['signature'=>$sign($version,$manifest['sha256'],$secret)]);
+    $update=GitHubUpdater::check(false,['Version'=>'0.5.1'],'zoer-connect/zoer-connect.php',[]);
+    \check(is_array($update)&&$update['version']===$version,'Signed release not offered.');
+    $file=GitHubUpdater::download(false,$package,null,['plugin'=>'zoer-connect/zoer-connect.php']);
+    \check(is_string($file)&&file_get_contents($file)===$content,'Signed release not downloaded.');unlink($file);
+    $GLOBALS['downloadContent']='altered ZIP fixture';
+    $file=GitHubUpdater::download(false,$package,null,['plugin'=>'zoer-connect/zoer-connect.php']);
+    \check($file instanceof \WP_Error&&$file->code==='zoer_connect_update_checksum','Signed manifest let a changed ZIP through.');
+    // The unsigned legacy bridge feed cannot satisfy a configured key.
+    $GLOBALS['downloadContent']=$content;
+    \check(GitHubUpdater::download(false,$legacyPackage,null,[]) instanceof \WP_Error,'Unsigned legacy package accepted with a key.');
+    echo "PASS signed updates: unsigned notice without a key; with a key, unsigned, malformed, foreign-key and mismatched signatures are refused and signed releases verify\n";
+    echo "PASS stable channel never downloads a release candidate\n";
     echo "PASS source-repository update discovery, immutable versioned checksums, malformed metadata, and legacy transient compatibility\n";
     echo "PASS release-candidate channel: opt-in only, newest stable or rc by version, per-release manifests, verified downloads, settings form\n";
 }

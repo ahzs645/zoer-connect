@@ -16,7 +16,12 @@ $install=['zoer_import_setup_action'=>'install','_wpnonce'=>'nonce:zoer_import_s
 try{
  check(!ImportAdmin::ready($private,$root),'readiness is false before explicit setup');check(!is_dir($root.'/wp-content/mu-plugins'),'readiness read does not silently install MU');
  [$secret,$connection]=\ZoerConnect\ConnectionKey::create(7);
- check($connection['push']===true&&$connection['pull']===false,'new connections default to Push only');
+ check($connection['push']===false&&$connection['pull']===false&&$connection['code']===false,'new connections default to Push, Pull and Code off');
+ [,$pushOnly]=\ZoerConnect\ConnectionKey::create(7,null,true);check($pushOnly['push']&&!$pushOnly['code'],'Push alone does not grant Code');
+ [,$codeOnly]=\ZoerConnect\ConnectionKey::create(7,null,false,true);check(!$codeOnly['push']&&!$codeOnly['code'],'Code requires Push');
+ [,$legacyReset]=\ZoerConnect\ConnectionKey::create(7,['hash'=>str_repeat('a',64),'push'=>true,'pull'=>false]);check($legacyReset['push']&&$legacyReset['code']===false,'resetting a legacy key does not carry implicit code access forward');
+ [,$codeReset]=\ZoerConnect\ConnectionKey::create(7,['push'=>true,'code'=>true],false,true);check($codeReset['push']&&$codeReset['code'],'reset keeps Push and an explicit Code choice');
+ [$secret,$connection]=\ZoerConnect\ConnectionKey::create(7,null,true);
  [$replacement,$rotated]=\ZoerConnect\ConnectionKey::create(7,['push'=>false,'pull'=>true]);
  check(!$rotated['push']&&$rotated['pull'],'rotation preserves explicit permissions');
  [$replacement,$revoked]=\ZoerConnect\ConnectionKey::create(7,['push'=>false,'pull'=>false]);

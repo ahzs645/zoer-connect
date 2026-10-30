@@ -31,6 +31,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # PHP (sodium) signs update.json when ZOER_CONNECT_UPDATE_SIGNING_KEY is configured.
+      - uses: shivammathur/setup-php@b604ade2a87db23f8871b7182e69ec5e75effb45 # v2
+        with:
+          php-version: '8.3'
+          coverage: none
       - name: Validate qualified source and tag
         if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
         run: python3 scripts/check-release.py
@@ -43,9 +48,13 @@ jobs:
       - run: make test-package
       - name: Verify qualified ZIP checksum
         if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
+        env:
+          ZOER_CONNECT_UPDATE_SIGNING_KEY: ${{ secrets.ZOER_CONNECT_UPDATE_SIGNING_KEY }}
         run: python3 scripts/build-update-manifest.py
       - name: Build the release-candidate ZIP and its update manifest
         if: startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-')
+        env:
+          ZOER_CONNECT_UPDATE_SIGNING_KEY: ${{ secrets.ZOER_CONNECT_UPDATE_SIGNING_KEY }}
         run: |
           ZOER_CONNECT_PRERELEASE="${GITHUB_REF_NAME#*-}" python3 scripts/build.py
           python3 scripts/build-update-manifest.py --prerelease

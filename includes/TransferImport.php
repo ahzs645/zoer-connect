@@ -1,6 +1,6 @@
 <?php
 namespace ZoerConnect;
-foreach(['ImportError','StageStore','FileComparison','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement','RewriteRefresh','CachePurge','Publication','SettingsPreservation','DatabaseExporter','BatchUpload'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
+foreach(['ImportError','ConnectionKey','StageStore','FileComparison','WriteFence','SnapshotStream','TableStage','FilePublication','ChunkedFilePublication','Replacement','RewriteRefresh','CachePurge','Publication','SettingsPreservation','DatabaseExporter','BatchUpload'] as $dependency) require_once __DIR__.'/'.$dependency.'.php';
 
 /** Authenticated callers supply the current native credential generation. All
  * mutable job inputs are private and bound to that generation and destination.
@@ -73,6 +73,13 @@ final class TransferImport {
         $message=preg_replace(['~[A-Za-z]:\\\\[^\'"]*~','~(?<![\w:/.\-])/[^\'"]*~'],'[path]',$message)??self::GENERIC;
         $message=json_decode(json_encode(substr($message,0,300),JSON_INVALID_UTF8_SUBSTITUTE|JSON_THROW_ON_ERROR),true);
         return ['code'=>'zoer_import_failed','message'=>$message===''?self::GENERIC:$message,'phase'=>$phase];
+    }
+    /** Whether this key's import writes plugin or theme code (or replaces their selection); see ConnectionKey `code`. Unreadable journals count as code. */
+    public function touchesCode(string $id): bool {
+        try{$s=$this->read($id);}catch(\Throwable $e){return true;}
+        if(($s['selectedPlugins']??false)||($s['selectedThemes']??false))return true;
+        foreach($s['artifacts']??[] as $a)if(($a['kind']??null)==='file'&&is_string($a['path']??null)&&ConnectionKey::codePath($a['path']))return true;
+        return false;
     }
     public function phase(string $id): ?string {try{$s=$this->read($id);return $s['phase']==='paused'?($s['resumePhase']??'paused'):$s['phase'];}catch(\Throwable $e){return null;}}
     /** The destination's home must be the import target. Its WordPress address (siteurl) is the

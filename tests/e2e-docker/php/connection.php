@@ -1,8 +1,8 @@
 <?php
-// Run with: wp eval-file /zc/connection.php <rotate|permissions> [push] [pull] --user=<admin>
+// Run with: wp eval-file /zc/connection.php <rotate|permissions> [push] [pull] [code] --user=<admin>
 // Drives the same code path as the Tools -> Zoer Connect connection form:
 // ConnectionAdmin::render() with a nonce-verified HTTPS administrator POST. Key
-// generation therefore also runs the automatic Push + shared-hosting setup.
+// generation with `push` therefore also runs the automatic shared-hosting setup.
 // Prints JSON; the one-time key is returned only for 'rotate' and must be stored
 // privately by the caller (never logged).
 if (!defined('WP_CLI')) exit(1);
@@ -14,6 +14,7 @@ $_SERVER['DOCUMENT_ROOT'] = rtrim(ABSPATH, '/');
 $post = ['zoer_connection_action' => $action, '_wpnonce' => wp_create_nonce('zoer_connection_settings')];
 if (in_array('push', $args, true)) $post['allow_push'] = 'on';
 if (in_array('pull', $args, true)) $post['allow_pull'] = 'on';
+if (in_array('code', $args, true)) $post['allow_code'] = 'on';
 $_POST = $post;
 $_REQUEST = $post;
 ob_start();
