@@ -25,7 +25,7 @@ Upload and activate the plugin. Open Tools > Zoer Connect to generate connection
 
 == Changelog ==
 
-= 0.10.0 (development) =
+= 0.10.0 =
 Connection key scopes. New keys start with Push off, and Push no longer implies installing code: transfers that write wp-content/plugins or wp-content/themes, or replace the destination's plugin or theme selection, need the new Code permission (off by default, with a warning in Tools > Zoer Connect). Turning Code off stops an import that carries code from being applied; status, pause, finish, rollback and cleanup stay available. Keys created before 0.10.0 with Push keep code access so existing pairings keep working; the Permissions card flags them as legacy keys until an administrator saves a choice, and resetting such a key asks for Code again. GET /status reports permissions.code and permissions.legacyCode and the codeScope capability. Signed updates: release update.json files can carry an Ed25519 signature; when ZOER_CONNECT_UPDATE_PUBLIC_KEY (wp-config.php) or the plugin's built-in key is set, unsigned or badly signed updates are refused, and without a key administrators see a notice that updates are unsigned. Sites on the stable channel no longer accept a release candidate download. The import routes' REST fallback now authenticates in its permission callback.
 
 = 0.9.1 =
