@@ -164,11 +164,11 @@ namespace ZoerConnect {
     \check(!isset($GLOBALS['options'][GitHubUpdater::CHANNEL_OPTION])&&$GLOBALS['cleared']===2,'Opting out did not remove the channel.');
     // --- Signed updates (0.10.0) ---
     \check(GitHubUpdater::PUBLIC_KEY===''||defined('ZOER_CONNECT_UPDATE_PUBLIC_KEY'),'Test assumes no shipped key.');
-    \check(GitHubUpdater::publicKey()===null&&str_contains((string)GitHubUpdater::signingStatus(),'unsigned'),'Unsigned updates not reported.');
-    $GLOBALS['screen']=(object)['id'=>'dashboard'];\check(\notice()==='','Unsigned notice shown outside plugin screens.');
-    $GLOBALS['screen']=(object)['id'=>'plugins'];\check(str_contains(\notice(),'notice-warning')&&str_contains(\notice(),'ZOER_CONNECT_UPDATE_PUBLIC_KEY'),'Unsigned notice missing on Plugins.');
-    $GLOBALS['can']=false;\check(\notice()==='','Unsigned notice shown without update_plugins.');$GLOBALS['can']=true;
-    \check(str_contains(GitHubUpdater::settingsCard(),'updates are unsigned'),'Settings card does not say updates are unsigned.');
+    \check(GitHubUpdater::publicKey()===null&&GitHubUpdater::signingStatus()===null,'Optional signing requires setup.');
+    foreach (['dashboard','plugins','update-core','tools_page_zoer-connect'] as $screenId) {
+        $GLOBALS['screen']=(object)['id'=>$screenId];\check(\notice()==='','Optional signing notice shown on '.$screenId.'.');
+    }
+    \check(!str_contains(GitHubUpdater::settingsCard(),'updates are unsigned')&&!str_contains(GitHubUpdater::settingsCard(),'ZOER_CONNECT_UPDATE_PUBLIC_KEY'),'Settings card prompts for optional signing setup.');
     $pair=sodium_crypto_sign_keypair();$secret=sodium_crypto_sign_secretkey($pair);$other=sodium_crypto_sign_secretkey(sodium_crypto_sign_keypair());
     define('ZOER_CONNECT_UPDATE_PUBLIC_KEY',base64_encode(sodium_crypto_sign_publickey($pair)));
     $sign=fn(string $v,string $sha,string $key)=>base64_encode(sodium_crypto_sign_detached("zoer-connect-update-v1\n$v\n$sha\n",$key));
@@ -196,7 +196,7 @@ namespace ZoerConnect {
     // The unsigned legacy bridge feed cannot satisfy a configured key.
     $GLOBALS['downloadContent']=$content;
     \check(GitHubUpdater::download(false,$legacyPackage,null,[]) instanceof \WP_Error,'Unsigned legacy package accepted with a key.');
-    echo "PASS signed updates: unsigned notice without a key; with a key, unsigned, malformed, foreign-key and mismatched signatures are refused and signed releases verify\n";
+    echo "PASS signed updates: no setup notice without a key; with a key, unsigned, malformed, foreign-key and mismatched signatures are refused and signed releases verify\n";
     echo "PASS stable channel never downloads a release candidate\n";
     echo "PASS source-repository update discovery, immutable versioned checksums, malformed metadata, and legacy transient compatibility\n";
     echo "PASS release-candidate channel: opt-in only, newest stable or rc by version, per-release manifests, verified downloads, settings form\n";

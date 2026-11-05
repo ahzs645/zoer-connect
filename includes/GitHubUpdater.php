@@ -9,8 +9,7 @@ namespace ZoerConnect;
  * and ZIP SHA-256), so a GitHub release whose assets were replaced cannot vouch for itself. The
  * verifying key is PUBLIC_KEY, or ZOER_CONNECT_UPDATE_PUBLIC_KEY from wp-config.php (base64 of the
  * 32-byte public key). With a key, unsigned or badly signed updates are refused; an unusable key
- * refuses every update. Without a key, updates keep the SHA-256 check only and administrators see
- * a notice that updates are unsigned.
+ * refuses every update. Without a key, updates keep the SHA-256 check only, without a setup notice.
  */
 final class GitHubUpdater {
     private const PLUGIN = 'zoer-connect/zoer-connect.php';
@@ -53,19 +52,18 @@ final class GitHubUpdater {
         catch (\Throwable $e) { return false; }
     }
 
-    /** Plugins, Updates and Tools → Zoer Connect: say when updates are not signature-checked. */
+    /** Plugins, Updates and Tools → Zoer Connect: report an unusable configured signing key. */
     public static function signingNotice(): void {
         if (!current_user_can('update_plugins')) return;
         $screen = function_exists('get_current_screen') ? get_current_screen() : null;
         if ($screen && !in_array($screen->id ?? '', ['plugins', 'update-core', 'tools_page_zoer-connect'], true)) return;
         $text = self::signingStatus();
-        if ($text !== null) echo '<div class="notice notice-'.(self::publicKey() === false ? 'error' : 'warning').'"><p>'.esc_html($text).'</p></div>';
+        if ($text !== null) echo '<div class="notice notice-error"><p>'.esc_html($text).'</p></div>';
     }
 
-    /** Null when signed updates are enforced; otherwise what an administrator needs to know. */
+    /** Report only a configured signing key that blocks updates; signing is otherwise optional. */
     public static function signingStatus(): ?string {
         $key = self::publicKey();
-        if ($key === null) return 'Zoer Connect updates are unsigned: downloads are checked only against the SHA-256 published in the same GitHub release. Define ZOER_CONNECT_UPDATE_PUBLIC_KEY in wp-config.php to require signed updates.';
         if ($key === false) return 'Zoer Connect refuses all updates: the update signing key is not a base64 Ed25519 public key or this PHP has no sodium support. Fix ZOER_CONNECT_UPDATE_PUBLIC_KEY in wp-config.php.';
         return null;
     }
